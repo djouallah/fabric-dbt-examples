@@ -1,4 +1,9 @@
-# fabric-medallion-dbt
+# fabric-medallion-dbt-community
+
+> **Community edition.** This repo keeps all five engines, including the three DuckDB-based
+> dbt adapters (`duckrun`, `dbt-duckdb` + Iceberg, DuckLake). The Microsoft-supported version,
+> dwh (`dbt-fabric`) and spark (`dbt-fabricspark`) only, is
+> [fabric-medallion-dbt](https://github.com/djouallah/fabric-medallion-dbt).
 
 A medallion architecture on Microsoft Fabric: one dbt project that builds the **same AEMO gold layer** on Fabric Warehouse or Fabric Spark.
 
