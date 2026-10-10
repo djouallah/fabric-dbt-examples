@@ -42,9 +42,13 @@ def workflow():
 
 
 def _probes(smoke):
-    ctx = {"daily_file": {"path": "x/Files/csv_raw/daily/A.CSV", "stem": "A",
-                          "abfss": "abfss://ws@onelake.dfs.fabric.microsoft.com/x/A.CSV"}}
-    return smoke.probes(ctx)
+    files = [{"path": f"x/Files/csv_raw/daily/{s}.CSV", "stem": s,
+              "abfss": f"abfss://ws@onelake.dfs.fabric.microsoft.com/x/{s}.CSV"} for s in "BA"]
+    return smoke.probes({"daily_file": files[0], "daily_files": files})
+
+
+def _model(smoke, name):
+    return next(p[3][name] for p in _probes(smoke) if p[3] and name in p[3])
 
 
 def test_polars_is_not_a_registered_engine():
@@ -122,3 +126,16 @@ def test_merge_probe_needs_a_real_merge(smoke):
 def test_insert_only_probe_asks_for_do_nothing(smoke):
     assert "do_nothing" in smoke.INSERT_ONLY_SQL
     assert (1, 10) in smoke.INSERT_ONLY_EXPECTED
+
+
+def test_file_list_probe_reads_two_files(smoke):
+    sql = _model(smoke, "f_read_csv_list")
+    assert sql.count("read_csv(") >= 2
+    assert "A.CSV" in sql and "B.CSV" in sql
+
+
+def test_picker_probe_uses_neither_hook_nor_merge_clauses(smoke):
+    """It stands in for both, so using either would answer a different question."""
+    sql = _model(smoke, "m_picker")
+    assert "pre_hook" not in sql and "merge_clauses" not in sql
+    assert "run_query(" in sql and "this" in sql

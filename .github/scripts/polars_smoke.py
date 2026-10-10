@@ -195,6 +195,8 @@ SHAPES = {
     "s_slash_date_strptime": "select strptime('2026/09/17 04:30:00', '%Y/%m/%d %H:%M:%S') as parsed",
     "s_slash_date_cast": "select cast('2026/09/17 04:30:00' as timestamp) as parsed",
     "s_timestamptz": "select cast('2026-09-17 04:30:00' as timestamptz) as parsed",
+    "s_timestamp_with_tz": "select cast('2026-09-17 04:30:00' as timestamp with time zone) as parsed",
+    "s_at_time_zone": "select cast('2026-09-17 04:30:00' as timestamp) at time zone 'UTC' as parsed",
     "s_generate_series": "select unnest(generate_series(cast('2026-01-01' as date), "
                          "cast('2026-01-10' as date), interval 1 day)) as date",
     "s_date_spine": "{{ dbt.date_spine('day', \"cast('2026-01-01' as date)\", "
@@ -209,6 +211,30 @@ SHAPES = {
     "s_hash": "select {{ dbt.hash(\"'abc'\") }} as h",
 }
 
+# The fact models' pre_hook replaced by parse time: run_query reads the keys already in
+# {{ this }} and renders them into the model as literals. No pre_hook, no merge_clauses — the
+# two things dbt-polars does not do. Run 2 must leave key 1 alone and add key 3.
+PICKER_SQL = incremental("append") + """
+{%- set seen = [] -%}
+{%- if execute and is_incremental() -%}
+{%- set r = run_query("select distinct k from " ~ this) -%}
+{%- if r is not none -%}{%- for row in r.rows -%}{%- do seen.append(row[0]) -%}{%- endfor -%}{%- endif -%}
+{%- endif %}
+select k, v from (
+{% if var('batch') == 1 %}
+  select 1 as k, 10 as v union all select 2 as k, 20 as v
+{% else %}
+  select 1 as k, 111 as v union all select 3 as k, 30 as v
+{% endif %}
+) as s
+{% if seen %}where k not in ({{ seen | join(', ') }}){% endif %}
+"""
+
+# The ragged read the DuckDB legs do in duckdb_read_csv(), spelled as Polars SQL named
+# arguments. Whether Polars SQL read_csv() takes ANY option is the question.
+READ_CSV_OPTIONS_SQL = ("has_header => false, skip_rows => 1, infer_schema => false, "
+                        "truncate_ragged_lines => true, include_file_paths => 'filename'")
+
 RUN_QUERY_SQL = """
 {%- if execute -%}
 {%- set r = run_query("select 42 as n") -%}
@@ -221,9 +247,22 @@ select {{ n }} as rows_returned, {{ v }} as value
 DUNIT = "column_1 = 'D' and column_2 = 'DUNIT' and column_4 = '3'"
 
 
+def glob_abfss():
+    return f"abfss://{WORKSPACE}@{ONELAKE_DFS}/{LANDING_ITEM}/{CSV_DIR}/*.CSV"
+
+
+def run_query_file_sql(abfss):
+    return ("{%- if execute -%}\n"
+            "{%- set r = run_query(\"select count(*) as n from read_csv('" + abfss + "')\") -%}\n"
+            "{%- set n = r.rows[0][0] if (r is not none and (r.rows | length) > 0) else -1 -%}\n"
+            "{%- else -%}{%- set n = -2 -%}{%- endif %}\n"
+            "select {{ n }} as n\n")
+
+
 def probes(ctx):
     files = bool(LANDING_ITEM)
     one = ctx.get("daily_file")
+    two = ctx.get("daily_files") or []
     out = [
         (1, "dbt debug", "does the profile load and the adapter connect", None, ["debug"], None),
         (2, "table model, built twice",
@@ -279,6 +318,42 @@ def probes(ctx):
                           "from {{ source('landing_daily', 'daily_glob') }} limit 5"}
          if files else None,
          [None], lambda c: expect_nonempty(c, "f_daily_glob")),
+        (12, "landed AEMO CSV, Polars SQL read_csv() with options",
+         "the ragged read duckdb_read_csv() does: no header, all String, ragged rows, filename",
+         {"f_read_csv_opts": "{{ config(materialized='table') }}\nselect filename, count(*) as n "
+                             "from read_csv('" + (one or {}).get("abfss", "") + "', "
+                             + READ_CSV_OPTIONS_SQL + ") where " + DUNIT + " group by filename"}
+         if one else None,
+         [None], lambda c: expect_dunit(c, "f_read_csv_opts")),
+        (13, "landed AEMO CSV, Polars SQL read_csv() defaults",
+         "which columns a bare read_csv() gives a ragged file: is the DUNIT record addressable",
+         {"f_read_csv_shape": "{{ config(materialized='table') }}\nselect * from read_csv('"
+                              + (one or {}).get("abfss", "") + "') limit 20"}
+         if one else None,
+         [None], lambda c: expect_shape(c, "f_read_csv_shape")),
+        (14, "landed AEMO CSV, Polars SQL read_csv() over a glob",
+         "the folder at once, bypassing the source's lower-case .csv (dbt-polars#29)",
+         {"f_read_csv_glob": "{{ config(materialized='table') }}\nselect * from read_csv('"
+                             + glob_abfss() + "') limit 5"}
+         if files else None,
+         [None], lambda c: expect_nonempty(c, "f_read_csv_glob")),
+        (15, "landed AEMO CSV, a file list as UNION ALL",
+         "how a list rendered at parse time would be read: one read_csv() per file",
+         {"f_read_csv_list": "{{ config(materialized='table') }}\nselect count(*) as n from ("
+                             + " union all ".join(f"select 1 as x from read_csv('{f['abfss']}')"
+                                                  for f in two) + ") as t"}
+         if len(two) >= 2 else None,
+         [None], lambda c: expect_total_rows(c, "f_read_csv_list", two)),
+        (16, "file picker at parse time, against {{ this }}",
+         "the pre_hook replaced: run_query lists the keys present, the model excludes them",
+         {"m_picker": PICKER_SQL}, [{"batch": 1}, {"batch": 2}],
+         lambda c: expect_rows(c, "m_picker", INSERT_ONLY_EXPECTED)),
+        (17, "run_query over a landed file at parse time",
+         "the fact models count pending files before they read; does that context reach OneLake",
+         {"f_run_query_file": "{{ config(materialized='table') }}\n"
+                              + run_query_file_sql((one or {}).get("abfss", ""))}
+         if one else None,
+         [None], lambda c: expect_positive(c, "f_run_query_file")),
     ]
     for name, sql in SHAPES.items():
         out.append((len(out) + 1, f"SQL shape: {name[2:]}", "Polars SQL dialect, as the models write it",
@@ -330,23 +405,55 @@ def expect_nonempty(ctx, name):
     return "PASS", f"{len(rows)} rows, first={rows[0]}"
 
 
+def padded_scan(abfss):
+    """The file read by Polars directly, padded to the widest AEMO record: what a correct read
+    gives. A narrower read silently drops rows."""
+    import polars as pl
+    return pl.scan_csv(abfss, has_header=False, skip_rows=1,
+                       schema={f"column_{i}": pl.String for i in range(1, 132)},
+                       truncate_ragged_lines=True, missing_columns="insert",
+                       storage_options={"bearer_token": TOKEN})
+
+
 def expect_dunit(ctx, name):
-    """Compare with the same file read by Polars directly, padded to the widest AEMO record:
-    the count a correct read gives. A narrower read silently drops DUNIT rows."""
     import polars as pl
     rows, _ = table_rows(ctx, name)
     if not rows:
         return "FAIL", "table is empty"
     got = sum(r["n"] for r in rows)
-    truth = (pl.scan_csv(ctx["daily_file"]["abfss"], has_header=False, skip_rows=1,
-                         schema={f"column_{i}": pl.String for i in range(1, 132)},
-                         truncate_ragged_lines=True, missing_columns="insert",
-                         storage_options={"bearer_token": TOKEN})
+    truth = (padded_scan(ctx["daily_file"]["abfss"])
              .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
                      & (pl.col("column_4") == "3"))
              .select(pl.len()).collect().item())
-    detail = f"DUNIT rows {got}, a padded read gives {truth}, filename={rows[0]['filename']}"
+    detail = f"DUNIT rows {got}, a padded read gives {truth}, filename={rows[0].get('filename')}"
     return ("PASS" if got == truth else "FAIL"), detail
+
+
+def expect_total_rows(ctx, name, files):
+    """Every row of every file, against the padded reads summed."""
+    import polars as pl
+    rows, _ = table_rows(ctx, name)
+    if not rows:
+        return "FAIL", "table is empty"
+    got = rows[0]["n"]
+    truth = sum(padded_scan(f["abfss"]).select(pl.len()).collect().item() for f in files)
+    return ("PASS" if got == truth else "FAIL"), f"{got} rows from {len(files)} files, padded reads give {truth}"
+
+
+def expect_shape(ctx, name):
+    """Reports the columns Polars chose. PASS means only that it read; the detail is the answer."""
+    tbl = ctx["catalog"].load_table((SCHEMA, name))
+    arrow = tbl.scan().to_arrow()
+    if not arrow.num_rows:
+        return "FAIL", "table is empty"
+    cols = arrow.schema.names
+    return "PASS", f"{len(cols)} columns {cols[:8]}{' ...' if len(cols) > 8 else ''}, first={arrow.slice(0, 1).to_pylist()[0]}"
+
+
+def expect_positive(ctx, name):
+    rows, _ = table_rows(ctx, name)
+    n = rows[0]["n"] if rows else None
+    return ("PASS" if isinstance(n, int) and n > 0 else "FAIL"), f"run_query returned n={n}"
 
 
 def write_project(root, models, sources):
@@ -381,11 +488,11 @@ def dbt(root, command, vars_):
     return True, ""
 
 
-def newest_daily_file():
-    """The newest landed PUBLIC_DAILY file, from the OneLake DFS listing. None on any failure,
+def newest_daily_files(n=2):
+    """The n newest landed PUBLIC_DAILY files, from the OneLake DFS listing. [] on any failure,
     which makes the per-file probes SKIP: an empty landing zone is not a finding about Polars."""
     if not LANDING_ITEM:
-        return None
+        return []
     import urllib.parse
     import urllib.request
     q = urllib.parse.urlencode({"resource": "filesystem", "recursive": "false",
@@ -398,16 +505,13 @@ def newest_daily_file():
             paths = json.load(r).get("paths", [])
     except Exception as e:  # noqa: BLE001 - reported, then SKIP
         say(f"    (could not list {CSV_DIR}: {oneline(e)})")
-        return None
+        return []
     names = sorted((p["name"] for p in paths if not p.get("isDirectory")
                     and p["name"].lower().endswith(".csv")), reverse=True)
     if not names:
         say(f"    (no CSVs under {CSV_DIR} -- has anything landed?)")
-        return None
-    name = names[0]
-    base = name.rsplit("/", 1)[1]
-    return {"path": name, "stem": base.rsplit(".", 1)[0],
-            "abfss": f"abfss://{WORKSPACE}@{ONELAKE_DFS}/{name}"}
+    return [{"path": name, "stem": name.rsplit("/", 1)[1].rsplit(".", 1)[0],
+             "abfss": f"abfss://{WORKSPACE}@{ONELAKE_DFS}/{name}"} for name in names[:n]]
 
 
 def drop_probe_tables(cat):
@@ -433,7 +537,9 @@ def banner():
 
 def main():
     banner()
-    ctx = {"catalog": iceberg_catalog(), "daily_file": newest_daily_file()}
+    daily_files = newest_daily_files()
+    ctx = {"catalog": iceberg_catalog(), "daily_files": daily_files,
+           "daily_file": daily_files[0] if daily_files else None}
     try:
         ctx["catalog"].create_namespace_if_not_exists((SCHEMA,))
     except Exception as e:  # noqa: BLE001 - dbt-polars creates it too; its own error is the finding
