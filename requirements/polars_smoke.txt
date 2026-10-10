@@ -1,0 +1,10 @@
+# The dbt-polars SMOKE TEST, not an engine.
+#
+# DELIBERATELY NOT NAMED requirements/polars.txt. That stem is how pipeline.yml resolves an
+# ENGINE's dependencies (`requirements/${ENGINE}.txt`). Polars is a candidate, not a sixth
+# engine.
+#
+# Unpinned on purpose: the probe measures whatever dbt-polars has shipped most recently. The
+# log records the resolved versions. `iceberg` brings pyiceberg (the OneLake Iceberg REST
+# catalog), `azure` the catalog that reads the landed files in Files/.
+dbt-polars[iceberg,azure]
