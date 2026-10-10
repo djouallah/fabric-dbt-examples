@@ -75,10 +75,21 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "ONELAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
-      - name: Resolve the dbt and dbt_landing lakehouses
-        # ONE GET, AND IT CREATES NOTHING. A missing `dbt` lakehouse fails loudly; a missing
-        # `dbt_landing` only makes the Files probes SKIP.
+      - name: Resolve the lakehouses
+        # FABRIC_LAKEHOUSE_ID set: one lakehouse is both the Iceberg warehouse and the landing
+        # zone, with the AEMO daily CSVs in Files/csv (the tpch workspace's `test` lakehouse,
+        # which lakehouse_benchmark's ETL lands). Unset: the `dbt` / `dbt_landing` pair the five
+        # legs use, by name. ONE GET, AND IT CREATES NOTHING. A missing `dbt` lakehouse fails
+        # loudly; a missing `dbt_landing` only makes the Files probes SKIP.
+        env:
+          FABRIC_LAKEHOUSE_ID: ${{ secrets.FABRIC_LAKEHOUSE_ID }}
         run: |
+          if [ -n "$FABRIC_LAKEHOUSE_ID" ]; then
+            echo "WAREHOUSE_PATH=$FABRIC_WORKSPACE_ID/$FABRIC_LAKEHOUSE_ID" >> "$GITHUB_ENV"
+            echo "LANDING_ITEM=$FABRIC_LAKEHOUSE_ID" >> "$GITHUB_ENV"
+            echo "CSV_DIR=Files/csv" >> "$GITHUB_ENV"
+            exit 0
+          fi
           T=$(az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
           L=$(curl -sf -H "Authorization: Bearer $T" "https://api.fabric.microsoft.com/v1/workspaces/$FABRIC_WORKSPACE_ID/lakehouses")
           ID=$(echo "$L" | jq -r '.value[] | select(.displayName=="dbt") | .id')

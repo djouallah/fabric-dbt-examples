@@ -26,7 +26,9 @@ namespace the five engines use.
 Env (the workflow supplies all of these):
     WAREHOUSE_PATH      "{workspace_id}/{dbt lakehouse id}", the iceberg leg's warehouse
     ONELAKE_TOKEN       the https://storage.azure.com/ token
-    LANDING_ITEM        the dbt_landing lakehouse id (optional; the Files probes SKIP without it)
+    LANDING_ITEM        the lakehouse holding the landed files (optional; the Files probes SKIP
+                        without it)
+    CSV_DIR             the daily CSV folder under it (default Files/csv_raw/daily)
     POLARS_SMOKE_SCHEMA namespace to build in
     POLARS_SMOKE_KEEP   "1" leaves the tables behind
 
@@ -45,6 +47,11 @@ from pathlib import Path
 WAREHOUSE = os.environ["WAREHOUSE_PATH"]
 TOKEN = os.environ["ONELAKE_TOKEN"]
 LANDING_ITEM = os.environ.get("LANDING_ITEM", "")
+# Where the AEMO daily CSVs sit under the landing item. The five legs land them in
+# Files/csv_raw/daily (download_aemo.py); lakehouse_benchmark lands them in Files/csv.
+CSV_DIR = (os.environ.get("CSV_DIR") or "Files/csv_raw/daily").strip("/")
+# The archive log exists only in the five legs' landing zone.
+HAS_ARCHIVE_LOG = CSV_DIR == "Files/csv_raw/daily"
 SCHEMA = os.environ.get("POLARS_SMOKE_SCHEMA") or "polars_smoke"
 KEEP = os.environ.get("POLARS_SMOKE_KEEP") == "1"
 WORKSPACE = WAREHOUSE.split("/", 1)[0]
@@ -129,7 +136,7 @@ def sources_yml(daily_stem):
     return {"version": 2, "sources": [
         {"name": "landing_files", "database": "landing", "schema": "Files",
          "tables": tables_files},
-        {"name": "landing_daily", "database": "landing", "schema": "Files/csv_raw/daily",
+        {"name": "landing_daily", "database": "landing", "schema": CSV_DIR,
          "tables": tables_daily},
     ]}
 
@@ -249,7 +256,7 @@ def probes(ctx):
          "stg_csv_archive_log reads csv_raw_archive_log.parquet",
          {"f_archive_log": "{{ config(materialized='table') }}\nselect source_type, count(*) as n "
                            "from {{ source('landing_files', 'archive_log') }} group by source_type"}
-         if files else None,
+         if files and HAS_ARCHIVE_LOG else None,
          [None], lambda c: expect_nonempty(c, "f_archive_log")),
         (9, "landed AEMO CSV, Polars SQL read_csv()",
          "a model reading a named file directly, the way the DuckDB legs call read_csv()",
@@ -265,10 +272,11 @@ def probes(ctx):
          if one else None,
          [None], lambda c: expect_dunit(c, "f_daily_one")),
         (11, "landed AEMO CSV, source over the folder (identifier '*')",
-         "every file in csv_raw/daily at once",
-         {"f_daily_glob": "{{ config(materialized='table') }}\nselect count(distinct filename) "
-                          "as files, count(*) as n from {{ source('landing_daily', 'daily_glob') }}"
-                          " where " + DUNIT}
+         "every file in the folder at once",
+         # LIMIT, not a count: the folder can hold tens of GB (lakehouse_benchmark's Files/csv),
+         # and the question is whether the glob resolves to the landed files at all.
+         {"f_daily_glob": "{{ config(materialized='table') }}\nselect filename, column_2 "
+                          "from {{ source('landing_daily', 'daily_glob') }} limit 5"}
          if files else None,
          [None], lambda c: expect_nonempty(c, "f_daily_glob")),
     ]
@@ -381,7 +389,7 @@ def newest_daily_file():
     import urllib.parse
     import urllib.request
     q = urllib.parse.urlencode({"resource": "filesystem", "recursive": "false",
-                                "directory": f"{LANDING_ITEM}/Files/csv_raw/daily",
+                                "directory": f"{LANDING_ITEM}/{CSV_DIR}",
                                 "maxResults": "5000"})
     req = urllib.request.Request(f"https://{ONELAKE_DFS}/{WORKSPACE}?{q}",
                                  headers={"Authorization": f"Bearer {TOKEN}"})
@@ -389,12 +397,12 @@ def newest_daily_file():
         with urllib.request.urlopen(req, timeout=60) as r:
             paths = json.load(r).get("paths", [])
     except Exception as e:  # noqa: BLE001 - reported, then SKIP
-        say(f"    (could not list csv_raw/daily: {oneline(e)})")
+        say(f"    (could not list {CSV_DIR}: {oneline(e)})")
         return None
     names = sorted((p["name"] for p in paths if not p.get("isDirectory")
                     and p["name"].lower().endswith(".csv")), reverse=True)
     if not names:
-        say("    (no CSVs under Files/csv_raw/daily -- has a real leg ever landed?)")
+        say(f"    (no CSVs under {CSV_DIR} -- has anything landed?)")
         return None
     name = names[0]
     base = name.rsplit("/", 1)[1]
@@ -420,7 +428,7 @@ def banner():
             say(f"{pkg:26} (not installed)")
     say(f"{'warehouse':26} {WAREHOUSE}")
     say(f"{'namespace':26} {SCHEMA}")
-    say(f"{'landing item':26} {LANDING_ITEM or '(none -- Files probes SKIP)'}")
+    say(f"{'landing item':26} {LANDING_ITEM or '(none -- Files probes SKIP)'} {CSV_DIR}")
 
 
 def main():
@@ -441,7 +449,7 @@ def main():
         for number, name, why, models, runs, check in probes(ctx):
             say(f"\n[{number:2}] {name}\n     why: {why}")
             if models is None and runs != ["debug"]:
-                results.append((number, name, "SKIP", "no landed files"))
+                results.append((number, name, "SKIP", "not in this landing zone"))
                 say("     SKIP")
                 continue
             write_project(root, models or {}, sources)
