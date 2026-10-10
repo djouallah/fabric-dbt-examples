@@ -1,8 +1,8 @@
 # Candidate engines
 
 Two engines have been looked at as a sixth leg. Neither is being built, and the reasons are
-different in kind: **Sail** works and its *packaging* does not, while **Polars** has no dbt
-adapter to point a `--target` at in the first place.
+different in kind: **Sail** works and its *packaging* does not, while **Polars** has an adapter
+that runs SQL models, but the models here use SQL it does not have.
 
 Both are recorded here rather than dropped, because "we tried it and this is what stopped it"
 is the part that goes missing. A candidate engine's gaps are worked around inside its own leg,
@@ -77,23 +77,39 @@ found by a failed run and each a cost a real leg would carry:
 
 ---
 
-## Polars — the adapter is not there yet
+## Polars — the adapter works, the models' SQL does not
 
-**There is nothing to point a `--target` at.** Polars is an engine, not a dbt adapter: what
-exists is community work rather than a released adapter you can `pip install`, gate on
-`target.name` and hand a profile to the way the five legs here are. Until that exists there is
-no leg to write, and no smoke probe worth building either — `sail_smoke.yml` could be written
-because `dbt-sail` *is* installable and its contract could be exercised; there is no
-equivalent to exercise here.
+**There is an adapter now:** [dbt-polars](https://github.com/datamindedbe/incubator-dbt-polars)
+0.3.1 on PyPI, dbt-core 1.x. It runs a SQL model with Polars' own SQL engine (`pl.SQLContext`),
+and writes Iceberg with pyiceberg. `.github/workflows/polars_smoke.yml` runs it for real:
+`workflow_dispatch` only, gates nothing, **SQL models only**. A Python model would test a
+rewrite of the gold layer, not the engine. Every write is checked by reading the table back.
 
-**And if the adapter arrived tomorrow, the gold layer would still not survive the move.**
-Polars' SQL runs through `pl.SQLContext` rather than a database — no `dateadd`/`datediff`/
-`current_timestamp`/`hash`, and `date_trunc` limited to day/hour/minute/month/year — so the
-eight models would have to become Python models. That is the one-gold-layer rule breaking,
-which is the thing this repo exists to prevent: the value of a sixth leg is that it computes
-the same numbers from the same SQL, and a leg that rewrites the models in a dataframe API
-proves nothing about the engine, only about the rewrite.
+Run [38045478706](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38045478706)
+(dbt-polars 0.3.1, polars 2.0.0, pyiceberg 0.11.1), OneLake Iceberg REST catalog:
 
-So the order matters. The adapter is the blocker to *evaluating* Polars; the SQL surface is
-the blocker to *adopting* it. The second does not become interesting until the first is
-fixed — and fixing the first does not fix the second.
+| | result |
+|---|---|
+| table model, built twice | works: one append, then one overwrite |
+| incremental `merge`, three-column key | works. It is two commits: a delete (`overwrite`), then an `append` |
+| insert-only merge (`merge_clauses` `do_nothing`) | **wrong result, no error.** `merge_clauses` is ignored and the matched row is updated |
+| `append` + `NOT IN {{ this }}` | works |
+| `pre_hook` with SQL | **error**: "dbt-polars does not support SQL hooks: there is no database to run them on" |
+| `run_query` at parse time | works |
+| landed AEMO CSV with Polars SQL `read_csv('abfss://…/X.CSV')` | works (550,375 rows); the token comes from `AZURE_STORAGE_TOKEN` |
+| the same file as a dbt source | **fails.** The adapter adds `.csv` in lower case, and AEMO files end in `.CSV` ([dbt-polars#29](https://github.com/datamindedbe/incubator-dbt-polars/issues/29)). A folder glob matches nothing for the same reason |
+| slash date (`strptime`, and a plain `CAST`) | works |
+| `CAST(… AS TIMESTAMPTZ)` | **error**: timestamp with time zone not supported |
+| `unnest(generate_series(…))` (dim_calendar) | **error**: unsupported function. `{{ dbt.date_spine() }}` works |
+| window function, `DOUBLE → DECIMAL`, `split_part(…, -1)` | works. `0.125` → `DECIMAL(18,2)` gives `0.12`, like DuckDB |
+| `{{ dbt.hash() }}` | **error**: Polars SQL has no hash function; the adapter says to use a Python model |
+
+**What blocks a leg.** The fact models pick their files in a `pre_hook` (`SET VARIABLE`), read
+them with `read_csv()` options (no header, all VARCHAR, ragged rows, `filename`), and merge
+insert-only. dbt-polars has no SQL hooks and ignores `merge_clauses`. Polars SQL `read_csv()`
+was only tested with a path, so the ragged read with options is still open. A source can carry
+those options, but it cannot name a `.CSV` file or a list of files. The `TIMESTAMPTZ` cast and
+`generate_series` would need a Polars branch of their own.
+
+So the adapter is no longer the blocker to *evaluating* Polars. The SQL surface and the
+adapter's file sources are the blocker to *adopting* it.
