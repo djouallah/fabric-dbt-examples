@@ -104,12 +104,33 @@ Run [38045478706](https://github.com/djouallah/fabric-medallion-dbt-community/ac
 | window function, `DOUBLE → DECIMAL`, `split_part(…, -1)` | works. `0.125` → `DECIMAL(18,2)` gives `0.12`, like DuckDB |
 | `{{ dbt.hash() }}` | **error**: Polars SQL has no hash function; the adapter says to use a Python model |
 
-**What blocks a leg.** The fact models pick their files in a `pre_hook` (`SET VARIABLE`), read
-them with `read_csv()` options (no header, all VARCHAR, ragged rows, `filename`), and merge
-insert-only. dbt-polars has no SQL hooks and ignores `merge_clauses`. Polars SQL `read_csv()`
-was only tested with a path, so the ragged read with options is still open. A source can carry
-those options, but it cannot name a `.CSV` file or a list of files. The `TIMESTAMPTZ` cast and
-`generate_series` would need a Polars branch of their own.
+Run [38051227050](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38051227050)
+(same versions) probed the gaps that run left open:
 
-So the adapter is no longer the blocker to *evaluating* Polars. The SQL surface and the
-adapter's file sources are the blocker to *adopting* it.
+| | result |
+|---|---|
+| Polars SQL `read_csv(path, has_header => false, …)` | **error**: "`read_csv` expects a single file path; found 6 arguments". Polars SQL `read_csv()` takes **no options at all** |
+| `select *` from a bare `read_csv()` on a ragged AEMO file | **error**: "found more fields than defined in 'Schema'". It infers the schema from the first line and cannot be told otherwise |
+| `read_csv()` over a `*.CSV` glob | **error**: "schema names differ" between files, for the same reason |
+| two files as `UNION ALL` of `read_csv()` | works, 1,100,750 rows = the padded reads, but only because the probe selects **no column**: a bare `count(*)` never materialises the ragged fields |
+| file picker at parse time: `run_query` on `{{ this }}`, keys rendered as a literal `NOT IN` | works. No `pre_hook`, no `merge_clauses`, insert-only result correct |
+| `run_query` over a landed file at parse time | works (550,375): the parse-time context reaches OneLake |
+| `CAST(… AS TIMESTAMP WITH TIME ZONE)`, `… AT TIME ZONE 'UTC'` | **error**, both: no tz-aware timestamp in Polars SQL by any spelling |
+
+**What blocks a leg.** Two of the three blockers have a hook-free workaround now. The file
+picker can move to parse time (a `run_query` against `{{ this }}`), and that also gives an
+insert-only load through `append`, so neither SQL hooks nor `merge_clauses` is needed. A
+rendered file list can be read as a `UNION ALL`.
+
+**The read itself is the wall.** A ragged AEMO file needs the reader told the width and the
+options (no header, all String, `truncate_ragged_lines`, the file name). Polars SQL
+`read_csv()` accepts a path and nothing else. A dbt source *can* carry those options, but it
+cannot name a `.CSV` file or a list of files
+([dbt-polars#29](https://github.com/datamindedbe/incubator-dbt-polars/issues/29)). So no SQL
+model can read the fact models' input today. Either Polars SQL `read_csv()` gains options,
+or #29 is fixed and a source takes a file list. Then `TIMESTAMPTZ` and `generate_series`
+would still need a Polars branch of their own (`date_spine` covers the second; the first would
+make `SETTLEMENTDATE` tz-naive on this leg alone, which `parity.py` would have to allow).
+
+So the adapter is no longer the blocker to *evaluating* Polars. Its CSV read is the blocker
+to *adopting* it.
