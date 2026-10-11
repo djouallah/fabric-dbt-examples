@@ -314,11 +314,10 @@ def probes(ctx):
          [None], lambda c: expect_nonempty(c, "f_read_csv")),
         (10, "landed AEMO CSV, source by exact file name",
          "one landed PUBLIC_DAILY file, DUNIT record, with the file name column",
-         {"f_daily_one": "{{ config(materialized='table') }}\nselect filename, count(*) as n "
-                         "from {{ source('landing_daily', 'daily_one') }} where " + DUNIT
-                         + " group by filename"}
+         {"f_daily_one": "{{ config(materialized='table') }}\n"
+                         "select * from {{ source('landing_daily', 'daily_one') }}"}
          if one else None,
-         [None], lambda c: expect_dunit(c, "f_daily_one")),
+         [None], lambda c: expect_dunit_by_position(c, "f_daily_one")),
         (11, "landed AEMO CSV, source over the folder (identifier '*')",
          "every file in the folder at once",
          # LIMIT, not a count: the folder can hold tens of GB (lakehouse_benchmark's Files/csv),
@@ -373,13 +372,13 @@ def probes(ctx):
     out.append((len(out) + 1, "landed AEMO CSV, glob source filtered to a file list",
                 "how a leg would read: one source over the folder, narrowed to the files the "
                 "parse-time picker chose",
-                {"f_daily_list": "{{ config(materialized='table') }}\nselect filename, count(*) "
-                                 "as n from {{ source('landing_daily', 'daily_glob') }} where "
-                                 + DUNIT + " and split_part(filename, '/', -1) in ("
+                {"f_daily_list": "{{ config(materialized='table') }}\nselect * from "
+                                 "{{ source('landing_daily', 'daily_glob') }} where "
+                                 "split_part(filename, '/', -1) in ("
                                  + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in two)
-                                 + ") group by filename"}
+                                 + ")"}
                 if len(two) >= 2 else None,
-                [None], lambda c: expect_dunit(c, "f_daily_list", two)))
+                [None], lambda c: expect_dunit_by_position(c, "f_daily_list", two)))
     return out
 
 
@@ -450,6 +449,36 @@ def expect_dunit(ctx, name, files=None):
     detail = (f"DUNIT rows {got} from {len(rows)} file(s), a padded read gives {truth}, "
               f"filename={rows[0].get('filename')}")
     return ("PASS" if got == truth else "FAIL"), detail
+
+
+def expect_dunit_by_position(ctx, name, files=None):
+    """For a model that copies a headerless read as-is (`select *`). Grades by POSITION, so
+    it does not depend on what Polars names the columns -- run 38120589486's DUNIT filter on
+    column_1/2/4 matched nothing, and its glob row had column_2 = 'CASESOLUTION', which reads
+    like 0-based names. Also reports the width: a DUNIT record is 53 fields, and a read that
+    takes its width from the first line cuts it short."""
+    import polars as pl
+    import pyarrow.compute as pc
+    arrow = ctx["catalog"].load_table((SCHEMA, name)).scan().to_arrow()
+    cols = [c for c in arrow.schema.names if c != "filename"]
+    if not arrow.num_rows or len(cols) < 4:
+        return "FAIL", f"{arrow.num_rows} rows, columns {cols[:6]}"
+    mask = pc.and_(pc.and_(pc.equal(arrow[cols[0]], "D"), pc.equal(arrow[cols[1]], "DUNIT")),
+                   pc.equal(arrow[cols[3]], "3"))
+    got = pc.sum(mask).as_py() or 0
+    truth = sum(padded_scan(f["abfss"])
+                .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
+                        & (pl.col("column_4") == "3"))
+                .select(pl.len()).collect().item()
+                for f in (files or [ctx["daily_file"]]))
+    if len(cols) >= 53:
+        last = pc.filter(arrow[cols[52]], mask)
+        full = f"53rd field non-null on {len(last) - last.null_count} of {len(last)} DUNIT rows"
+    else:
+        full = "DUNIT rows CUT SHORT of their 53 fields"
+    detail = (f"DUNIT rows {got}, a padded read gives {truth}; {len(cols)} columns named "
+              f"{cols[0]}..{cols[-1]}; {full}")
+    return ("PASS" if got == truth and len(cols) >= 53 else "FAIL"), detail
 
 
 def expect_total_rows(ctx, name, files):
