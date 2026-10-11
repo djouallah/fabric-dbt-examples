@@ -122,17 +122,31 @@ CSV_READ_OPTIONS = {
 }
 
 
-def sources_yml(daily_stem):
+# The same, padded to the widest AEMO record (131 = DREGION's 130 + 1), the width the
+# DuckDB legs get from duckdb_read_csv()'s `columns`. Without it Polars takes the width of the
+# first line, and truncate_ragged_lines then cuts every wider record down to it. The dtype is
+# a string because YAML cannot carry a Polars type; whether scan_csv accepts that is part of
+# the question.
+CSV_READ_OPTIONS_PADDED = {**CSV_READ_OPTIONS,
+                           "schema": {f"column_{i}": "String" for i in range(1, 132)}}
+
+
+def sources_yml(daily_name):
+    """`daily_name` is the file name WITH its `.CSV`: dbt-polars#30 uses an identifier that
+    already ends in the format's extension as written."""
     if not LANDING_ITEM:
         return None
     tables_files = [{"name": "archive_log", "identifier": "csv_raw_archive_log",
                      "config": {"file_format": "parquet"}}]
-    tables_daily = [{"name": "daily_glob", "identifier": "*",
-                     "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS}}]
-    if daily_stem:
-        tables_daily.append({"name": "daily_one", "identifier": daily_stem,
-                             "config": {"file_format": "csv",
-                                        "read_options": CSV_READ_OPTIONS}})
+    tables_daily = [{"name": "daily_glob", "identifier": "*.CSV",
+                     "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS_PADDED}}]
+    if daily_name:
+        tables_daily += [
+            {"name": "daily_one", "identifier": daily_name,
+             "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS}},
+            {"name": "daily_one_padded", "identifier": daily_name,
+             "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS_PADDED}},
+        ]
     return {"version": 2, "sources": [
         {"name": "landing_files", "database": "landing", "schema": "Files",
          "tables": tables_files},
@@ -354,11 +368,30 @@ def probes(ctx):
                               + run_query_file_sql((one or {}).get("abfss", ""))}
          if one else None,
          [None], lambda c: expect_positive(c, "f_run_query_file")),
+        (18, "landed AEMO CSV, source by exact file name, padded to the widest record",
+         "probe 10 with the 131-column schema the DuckDB legs give their reader",
+         {"f_daily_one_padded": "{{ config(materialized='table') }}\nselect filename, count(*) "
+                                "as n from {{ source('landing_daily', 'daily_one_padded') }} "
+                                "where " + DUNIT + " group by filename"}
+         if one else None,
+         [None], lambda c: expect_dunit(c, "f_daily_one_padded")),
     ]
     for name, sql in SHAPES.items():
         out.append((len(out) + 1, f"SQL shape: {name[2:]}", "Polars SQL dialect, as the models write it",
                     {name: "{{ config(materialized='table') }}\n" + sql}, [None],
                     (lambda n: lambda c: expect_nonempty(c, n))(name)))
+    # LAST ON PURPOSE: if Polars cannot prune files on the `filename` predicate it scans the
+    # whole folder (tens of GB in Files/csv), and a step timeout then costs only this probe.
+    out.append((len(out) + 1, "landed AEMO CSV, padded glob source filtered to a file list",
+                "how a leg would read: one source over the folder, narrowed to the files the "
+                "parse-time picker chose",
+                {"f_daily_list": "{{ config(materialized='table') }}\nselect filename, count(*) "
+                                 "as n from {{ source('landing_daily', 'daily_glob') }} where "
+                                 + DUNIT + " and split_part(filename, '/', -1) in ("
+                                 + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in two)
+                                 + ") group by filename"}
+                if len(two) >= 2 else None,
+                [None], lambda c: expect_dunit(c, "f_daily_list", two)))
     return out
 
 
@@ -415,17 +448,19 @@ def padded_scan(abfss):
                        storage_options={"bearer_token": TOKEN})
 
 
-def expect_dunit(ctx, name):
+def expect_dunit(ctx, name, files=None):
     import polars as pl
     rows, _ = table_rows(ctx, name)
     if not rows:
         return "FAIL", "table is empty"
     got = sum(r["n"] for r in rows)
-    truth = (padded_scan(ctx["daily_file"]["abfss"])
-             .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
-                     & (pl.col("column_4") == "3"))
-             .select(pl.len()).collect().item())
-    detail = f"DUNIT rows {got}, a padded read gives {truth}, filename={rows[0].get('filename')}"
+    truth = sum(padded_scan(f["abfss"])
+                .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
+                        & (pl.col("column_4") == "3"))
+                .select(pl.len()).collect().item()
+                for f in (files or [ctx["daily_file"]]))
+    detail = (f"DUNIT rows {got} from {len(rows)} file(s), a padded read gives {truth}, "
+              f"filename={rows[0].get('filename')}")
     return ("PASS" if got == truth else "FAIL"), detail
 
 
@@ -530,6 +565,14 @@ def banner():
             say(f"{pkg:26} {version(pkg)}")
         except Exception:  # noqa: BLE001
             say(f"{pkg:26} (not installed)")
+            continue
+        try:  # a git install records where it came from; PyPI installs have no direct_url
+            from importlib.metadata import distribution
+            url = json.loads(distribution(pkg).read_text("direct_url.json") or "{}")
+            if url:
+                say(f"{'':26}   from {url.get('url')} @ {url.get('vcs_info', {}).get('commit_id')}")
+        except Exception:  # noqa: BLE001
+            pass
     say(f"{'warehouse':26} {WAREHOUSE}")
     say(f"{'namespace':26} {SCHEMA}")
     say(f"{'landing item':26} {LANDING_ITEM or '(none -- Files probes SKIP)'} {CSV_DIR}")
@@ -547,7 +590,7 @@ def main():
     drop_probe_tables(ctx["catalog"])
     daily = ctx["daily_file"]
     say(f"{'daily file':26} {daily['path'] if daily else '(none)'}")
-    sources = sources_yml(daily["stem"] if daily else None)
+    sources = sources_yml(daily["path"].rsplit("/", 1)[1] if daily else None)
 
     results = []
     with tempfile.TemporaryDirectory() as tmp:

@@ -134,6 +134,22 @@ def test_file_list_probe_reads_two_files(smoke):
     assert "A.CSV" in sql and "B.CSV" in sql
 
 
+def test_sources_name_the_csv_files_as_written(smoke):
+    """dbt-polars#30 keeps an identifier that already ends in .csv, in any case. Without the
+    extension the adapter appends a lower-case .csv and AEMO's .CSV files are not found."""
+    tables = {t["name"]: t for s in smoke.sources_yml("A.CSV")["sources"] for t in s["tables"]}
+    assert tables["daily_one"]["identifier"] == "A.CSV"
+    assert tables["daily_glob"]["identifier"] == "*.CSV"
+
+
+def test_requirements_pin_one_fork_commit():
+    """Core and both catalogs from the same commit: the fix spans packages."""
+    reqs = [l for l in (REPO / "requirements" / "polars_smoke.txt").read_text().splitlines()
+            if l and not l.startswith("#")]
+    shas = {l.split("@")[-1].split("#")[0] for l in reqs}
+    assert len(reqs) == 3 and len(shas) == 1 and len(shas.pop()) == 40
+
+
 def test_picker_probe_uses_neither_hook_nor_merge_clauses(smoke):
     """It stands in for both, so using either would answer a different question."""
     sql = _model(smoke, "m_picker")
