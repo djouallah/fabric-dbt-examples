@@ -122,13 +122,11 @@ CSV_READ_OPTIONS = {
 }
 
 
-# The same, padded to the widest AEMO record (131 = DREGION's 130 + 1), the width the
-# DuckDB legs get from duckdb_read_csv()'s `columns`. Without it Polars takes the width of the
-# first line, and truncate_ragged_lines then cuts every wider record down to it. The dtype is
-# a string because YAML cannot carry a Polars type; whether scan_csv accepts that is part of
-# the question.
-CSV_READ_OPTIONS_PADDED = {**CSV_READ_OPTIONS,
-                           "schema": {f"column_{i}": "String" for i in range(1, 132)}}
+# NO PADDED VARIANT. A source cannot be told the width of the widest AEMO record: scan_csv's
+# `schema` wants Polars dtypes, YAML can only carry the name ("String"), and dbt-polars passes
+# read_options through unconverted -- "'str' is not a Polars data type" (run 38120335217).
+# Worse, it failed EVERY source probe in that run, not just its own: one bad source in the
+# project breaks the compile of any model that reads a source.
 
 
 def sources_yml(daily_name):
@@ -139,14 +137,11 @@ def sources_yml(daily_name):
     tables_files = [{"name": "archive_log", "identifier": "csv_raw_archive_log",
                      "config": {"file_format": "parquet"}}]
     tables_daily = [{"name": "daily_glob", "identifier": "*.CSV",
-                     "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS_PADDED}}]
+                     "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS}}]
     if daily_name:
-        tables_daily += [
-            {"name": "daily_one", "identifier": daily_name,
-             "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS}},
-            {"name": "daily_one_padded", "identifier": daily_name,
-             "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS_PADDED}},
-        ]
+        tables_daily.append({"name": "daily_one", "identifier": daily_name,
+                             "config": {"file_format": "csv",
+                                        "read_options": CSV_READ_OPTIONS}})
     return {"version": 2, "sources": [
         {"name": "landing_files", "database": "landing", "schema": "Files",
          "tables": tables_files},
@@ -368,13 +363,6 @@ def probes(ctx):
                               + run_query_file_sql((one or {}).get("abfss", ""))}
          if one else None,
          [None], lambda c: expect_positive(c, "f_run_query_file")),
-        (18, "landed AEMO CSV, source by exact file name, padded to the widest record",
-         "probe 10 with the 131-column schema the DuckDB legs give their reader",
-         {"f_daily_one_padded": "{{ config(materialized='table') }}\nselect filename, count(*) "
-                                "as n from {{ source('landing_daily', 'daily_one_padded') }} "
-                                "where " + DUNIT + " group by filename"}
-         if one else None,
-         [None], lambda c: expect_dunit(c, "f_daily_one_padded")),
     ]
     for name, sql in SHAPES.items():
         out.append((len(out) + 1, f"SQL shape: {name[2:]}", "Polars SQL dialect, as the models write it",
@@ -382,7 +370,7 @@ def probes(ctx):
                     (lambda n: lambda c: expect_nonempty(c, n))(name)))
     # LAST ON PURPOSE: if Polars cannot prune files on the `filename` predicate it scans the
     # whole folder (tens of GB in Files/csv), and a step timeout then costs only this probe.
-    out.append((len(out) + 1, "landed AEMO CSV, padded glob source filtered to a file list",
+    out.append((len(out) + 1, "landed AEMO CSV, glob source filtered to a file list",
                 "how a leg would read: one source over the folder, narrowed to the files the "
                 "parse-time picker chose",
                 {"f_daily_list": "{{ config(materialized='table') }}\nselect filename, count(*) "
