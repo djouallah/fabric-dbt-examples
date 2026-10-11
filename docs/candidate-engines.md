@@ -1,10 +1,11 @@
 # Candidate engines
 
-Two engines have been looked at as a sixth leg. Neither is being built, and the reasons are
-different in kind: **Sail** works and its *packaging* does not, while **Polars** has an adapter
-that runs SQL models, but the models here use SQL it does not have.
+Two engines have been looked at as a sixth leg. **Polars became it**: dbt-polars runs the gold
+layer from a fork that carries the two adapter fixes it needed (see AGENTS.md, "The polars
+engine"). **Sail** is still not built: the engine works and its *packaging* does not.
 
-Both are recorded here rather than dropped, because "we tried it and this is what stopped it"
+The Polars section below is kept as the record of how the leg was scoped. Both are recorded
+here rather than dropped, because "we tried it and this is what stopped it"
 is the part that goes missing. A candidate engine's gaps are worked around inside its own leg,
 never by changing the working five — so what matters about each is exactly which gaps a leg
 would have to carry.
@@ -77,7 +78,9 @@ found by a failed run and each a cost a real leg would carry:
 
 ---
 
-## Polars — the adapter works, the models' SQL does not
+## Polars — built, as the `polars` engine
+
+What the probes found, in order. The answer to each blocker is now in the leg itself.
 
 **There is an adapter now:** [dbt-polars](https://github.com/datamindedbe/incubator-dbt-polars)
 0.3.1 on PyPI, dbt-core 1.x. It runs a SQL model with Polars' own SQL engine (`pl.SQLContext`),

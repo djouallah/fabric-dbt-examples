@@ -361,6 +361,42 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   (`mode="direct_lake"`). A model reframes on deploy, so the engine must have built once
   before its model can be deployed.
 
+## The polars engine
+
+dbt-polars (Polars SQL, writes Iceberg through pyiceberg into the same OneLake REST catalog as
+`iceberg`). Everything below was found by `polars_smoke.yml` before the leg was built; the
+probe stays as the place to try an adapter question cheaply.
+
+- **IT RUNS ON A FORK.** `requirements/polars.txt` pins `djouallah/incubator-dbt-polars`,
+  branch `aemo`, by COMMIT, as archive URLs (the Fabric notebook may have no git). `aemo`
+  merges every fix this project needs; each fix also lives on its own branch for its upstream
+  PR. A new adapter bug: fix it on a branch off `upstream/main` in the fork (with a test and a
+  changelog line), let the fork's CI pass (open a draft PR INSIDE the fork — its CI only runs
+  on PRs), merge into `aemo`, re-pin. Never push to `datamindedbe`. Today: #29 (a source can
+  name `.CSV`) and dtype names in `read_options`.
+- **Files are read as SOURCES, padded to 131 String columns.** Polars SQL `read_csv()` takes a
+  path and no options, so the ragged AEMO files can only be read through a source's
+  `read_options`. A headerless read takes its width from the FIRST line and
+  `truncate_ragged_lines` then cuts every wider record down (a DUNIT row came back 25 wide), so
+  the source's `schema` names 131 columns — which needs the fork's dtype-name fix, and
+  `missing_columns: insert` on Polars 2. `macros/polars_read_csv.sql` binds the spec BY
+  POSITION from those `column_<i>`.
+- **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
+  the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
+  same `process_limit` — and renders the list as `filename IN (...)` on the folder's glob
+  source. dbt-polars raises on any hook that renders SQL; on-run hooks are silently skipped.
+- **`merge_clauses` is IGNORED, silently.** A do-nothing merge UPDATES matched rows. Every
+  insert-only model is `append` plus an exclusion: the facts exclude files already folded
+  (their `unique_key` starts with `file`, so that is the same operation), `fct_summary` and
+  `dim_duid` anti-join `{{ this }}` on their keys.
+- **TIMESTAMP, not TIMESTAMPTZ.** Polars SQL has no zoned type by any spelling. The one type
+  difference from the other engines; the README says so.
+- **Polars SQL dialect:** no `GROUP BY ALL`, no `generate_series` (`dbt.date_spine`), no
+  correlated or scalar subqueries in a select list (one-row `CROSS JOIN`s), `EXTRACT` for
+  `YEAR()`, `INTERVAL '6 days'`. Headerless reads name columns from `column_0` on Polars 2 —
+  irrelevant here because the padded `schema` names them.
+- **Not compacted.** `compact_iceberg.py` is iceberg's alone.
+
 ## Why iceberg is not on dbt OSS 2
 
 It was, for one day (`1f8c602` .. run 35338716074, 2026-09-17 to 2026-09-18), in a sibling

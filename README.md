@@ -1,7 +1,7 @@
 # fabric-medallion-dbt-community
 
-> **Community edition.** This repo keeps all five engines, including the three DuckDB-based
-> dbt adapters (`duckrun`, `dbt-duckdb` + Iceberg, DuckLake). The Microsoft-supported version,
+> **Community edition.** This repo keeps all six engines, including the community dbt
+> adapters (`duckrun`, `dbt-duckdb` + Iceberg, DuckLake, `dbt-polars`). The Microsoft-supported version,
 > dwh (`dbt-fabric`) and spark (`dbt-fabricspark`) only, is
 > [fabric-medallion-dbt](https://github.com/djouallah/fabric-medallion-dbt).
 
@@ -20,7 +20,7 @@ Both adapters are maintained by Microsoft.
 
 ## Other adapters (community)
 
-The same models also run on three community DuckDB adapters. They are not supported and are
+The same models also run on four community adapters. They are not supported and are
 included to show that the business logic is portable.
 
 | target | adapter | writes |
@@ -28,6 +28,7 @@ included to show that the business logic is portable.
 | `duckrun` | [`duckrun`](https://github.com/djouallah/duckrun) | Delta Lake on OneLake, via delta-rs |
 | `iceberg` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
+| `polars` | [`dbt-polars`](https://github.com/datamindedbe/incubator-dbt-polars), from [a fork](https://github.com/djouallah/incubator-dbt-polars/tree/aemo) until its fixes are released | Iceberg, through the OneLake Iceberg REST catalog (pyiceberg). Timestamps are tz-naive: Polars SQL has no zoned type |
 
 ## Docs
 
