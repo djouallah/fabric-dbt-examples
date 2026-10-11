@@ -318,7 +318,7 @@ def probes(ctx):
                          "select * from {{ source('landing_daily', 'daily_one') }}"}
          if one else None,
          [None], lambda c: expect_dunit_by_position(c, "f_daily_one")),
-        (11, "landed AEMO CSV, source over the folder (identifier '*')",
+        (11, "landed AEMO CSV, source over the folder (identifier '*.CSV')",
          "every file in the folder at once",
          # LIMIT, not a count: the folder can hold tens of GB (lakehouse_benchmark's Files/csv),
          # and the question is whether the glob resolves to the landed files at all.

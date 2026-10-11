@@ -117,6 +117,25 @@ Run [38051227050](https://github.com/djouallah/fabric-medallion-dbt-community/ac
 | `run_query` over a landed file at parse time | works (550,375): the parse-time context reaches OneLake |
 | `CAST(… AS TIMESTAMP WITH TIME ZONE)`, `… AT TIME ZONE 'UTC'` | **error**, both: no tz-aware timestamp in Polars SQL by any spelling |
 
+Run [38121051083](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38121051083)
+installs dbt-polars **from the fork** at the head of
+[dbt-polars#30](https://github.com/datamindedbe/incubator-dbt-polars/pull/30), the fix for #29
+(`requirements/polars_smoke.txt` pins the commit until a release carries it):
+
+| | result |
+|---|---|
+| a source naming one `.CSV` file | **reads.** DUNIT rows 164,448 = the padded read |
+| a `*.CSV` glob source, filtered on `filename` to two files | **reads**, 328,896 DUNIT rows = the padded reads, and well inside the timeout over a folder of tens of GB |
+| the width of either read | **25 columns**, the width of the file's first data line. A DUNIT record is 53 fields, so every one is **cut short** by `truncate_ragged_lines` |
+| `read_options: {schema: {column_1: String, …}}` to pad it | **error**: "'str' is not a Polars data type". dbt-polars hands `read_options` to `scan_csv` unconverted, and YAML can only carry the type's name. One such source fails every model that reads *any* source |
+| column names of a headerless read | `column_0 …`: **0-based** in Polars 2.0, where every other reader here is 1-based |
+
+So #30 removes the `.CSV` blocker and the source becomes the way in. It also gives the file list
+for free, since a `filename` filter on one glob source selects the files. The remaining wall is
+the **width**: a source cannot be told the 131-column schema, so the wide records cannot be read
+whole. That is one more small adapter change: convert dtype names in `read_options` (`schema`,
+`schema_overrides`) to Polars types.
+
 **What blocks a leg.** Two of the three blockers have a hook-free workaround now. The file
 picker can move to parse time (a `run_query` against `{{ this }}`), and that also gives an
 insert-only load through `append`, so neither SQL hooks nor `merge_clauses` is needed. A
