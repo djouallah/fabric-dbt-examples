@@ -21,6 +21,7 @@ PROJECT_OF = {
     "ducklake": "dbt1",
     "dwh": "dbt1",
     "spark": "dbt1",
+    "polars": "dbt1",
 }
 
 ENGINES = list(PROJECT_OF)

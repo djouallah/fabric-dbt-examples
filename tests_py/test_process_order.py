@@ -38,6 +38,23 @@ MACROS = [
     REPO / "dbt1" / "macros" / "new_source_files.sql",    # dwh
     REPO / "dbt1" / "macros" / "spark_new_files.sql",     # spark
 ]
+# polars picks its files at parse time in one shared macro (dbt-polars has no SQL hooks), and
+# every polars fact model must go through it.
+POLARS_MACRO = REPO / "macros" / "polars_read_csv.sql"
+POLARS_MODELS = [
+    REPO / "dbt1" / "models" / "aemo" / "polars" / "marts" / f"{model}.sql"
+    for model in ("fct_price", "fct_price_today", "fct_scada", "fct_scada_today")
+]
+
+
+def test_the_polars_picker_orders_before_it_limits():
+    src = POLARS_MACRO.read_text(encoding="utf-8")
+    assert "ORDER BY archive_path DESC LIMIT {{ env_var('process_limit'" in src
+
+
+@pytest.mark.parametrize("path", POLARS_MODELS, ids=lambda p: p.name)
+def test_every_polars_fact_model_uses_the_picker(path):
+    assert "polars_pending_files(" in path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("path", DUCKDB_MODELS, ids=lambda p: f"{p.parts[-3]}/{p.name}")
@@ -79,7 +96,7 @@ def test_the_downloader_lands_newest_first():
     )
 
 
-@pytest.mark.parametrize("engine", ["duckrun", "iceberg", "ducklake", "dwh", "spark"])
+@pytest.mark.parametrize("engine", ["duckrun", "iceberg", "ducklake", "dwh", "spark", "polars"])
 def test_a_backlog_is_a_warning_on_every_engine(engine):
     """These five go red for files that have merely not been folded YET. That is not a defect
     -- the data is correct, just incomplete, and it converges run by run -- and a red build

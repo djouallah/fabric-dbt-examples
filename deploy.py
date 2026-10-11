@@ -58,7 +58,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent
 SCRIPTS = REPO / ".github" / "scripts"
 BIM = REPO / "semantic_model" / "aemo_electricity.SemanticModel" / "model.bim"
-ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark")
+ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark", "polars")
 
 WS = os.environ.get("FABRIC_WORKSPACE_ID", "")
 FOLDER = os.environ.get("FOLDER", "dbt")

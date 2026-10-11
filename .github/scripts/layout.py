@@ -57,9 +57,9 @@ for p in (str(REPO), str(SCRIPTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-ALL_ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark")
+ALL_ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark", "polars")
 # The item each engine's tables live in: everything but dwh is in the shared lakehouse.
-LAKEHOUSE_ENGINES = ("duckrun", "iceberg", "ducklake", "spark")
+LAKEHOUSE_ENGINES = ("duckrun", "iceberg", "ducklake", "spark", "polars")
 
 # The canonical eight, in pipeline order -- inputs first, mart last -- so a disagreement in the
 # mart can be traced to its inputs on the rows above it.
@@ -72,18 +72,19 @@ MART = "fct_summary"
 # What actually wrote the parquet behind each engine's Delta log -- the interesting axis when
 # two engines produce the same rows in a very different physical layout.
 WRITER = {"duckrun": "delta-rs", "iceberg": "duckdb (iceberg)", "ducklake": "duckdb (ducklake)",
-          "spark": "spark", "dwh": "warehouse"}
+          "spark": "spark", "dwh": "warehouse",
+          "polars": "polars (pyiceberg)"}
 
 # Display only, and the SAME five labels as pipeline.yml's `plan` step and ci.yml's gating
 # matrix: the headline table and the Actions graph should name a leg identically, because they
 # are read side by side. `engine` remains the key everywhere else.
 LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 duckdb · iceberg",
          "ducklake": "🌊 duckdb · ducklake", "dwh": "🏢 fabric · warehouse",
-         "spark": "⚡ fabric · spark"}
+         "spark": "⚡ fabric · spark", "polars": "🐻‍❄️ polars · iceberg"}
 
 # The headline heading counts the engines in words -- "Five engines, one gold layer" reads as a
 # claim, "5 engine(s)" reads as a log line. A single-engine run still has to say something true.
-NUMBER = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+NUMBER = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
 
 # How many physical rows `run_lengths` reads from the sample file. A FIXED ROW BUDGET rather
 # than "the first row group", because the engines' row-group sizes differ by orders of magnitude

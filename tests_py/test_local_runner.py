@@ -25,7 +25,9 @@ import yaml
 from _layout import ENGINES, REPO
 
 PIPELINE = REPO / ".github" / "workflows" / "pipeline.yml"
-DUCKDB_LEGS = {"duckrun", "iceberg", "ducklake"}
+# The in-process legs: run_dbt.py drives them, in Fabric by default. polars is not DuckDB, but
+# it takes the same path for the same reason -- an in-memory engine folding the archive.
+DUCKDB_LEGS = {"duckrun", "iceberg", "ducklake", "polars"}
 CLIENT_LEGS = {"dwh", "spark"}
 
 

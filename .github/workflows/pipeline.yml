@@ -2,7 +2,7 @@ name: pipeline
 
 # Display only. The run page's title, instead of "pipeline #NN" -- what this run actually is,
 # legible in a screenshot without reading the inputs.
-run-name: pipeline — ${{ inputs.engines == 'all' && 'all five engines' || inputs.engines }}, one gold layer
+run-name: pipeline — ${{ inputs.engines == 'all' && 'all six engines' || inputs.engines }}, one gold layer
 
 # Builds the same models on every engine, proves they agree, and writes down what the run
 # touched and what it wrote (history/runs/); the Capacity units workflow then adds what it cost.
@@ -20,7 +20,7 @@ on:
         description: Which engines to build
         type: choice
         default: all
-        options: [all, duckrun, iceberg, ducklake, dwh, spark]
+        options: [all, duckrun, iceberg, ducklake, dwh, spark, polars]
       dbt_schema:
         description: DBT_SCHEMA — leave as 'mart' for production (schemas are <engine>_landing / <engine>_mart), or set e.g. 'test' to land the whole run in test_<engine>_landing / test_<engine>_mart instead
         type: string
@@ -97,7 +97,8 @@ jobs:
                 {"engine":"iceberg","label":"🧊 duckdb · iceberg"},
                 {"engine":"ducklake","label":"🌊 duckdb · ducklake"},
                 {"engine":"dwh","label":"🏢 fabric · warehouse"},
-                {"engine":"spark","label":"⚡ fabric · spark"}]'
+                {"engine":"spark","label":"⚡ fabric · spark"},
+                {"engine":"polars","label":"🐻‍❄️ polars · iceberg"}]'
           if [ "${{ inputs.engines }}" = "all" ]; then
             echo "engines=$(echo "$ALL" | jq -c .)" >> "$GITHUB_OUTPUT"
           else
@@ -235,7 +236,7 @@ jobs:
       # while the runner ran a bare `dbt build || dbt retry` with nothing of the sort. Both
       # places run the same .github/scripts/run_dbt.py now, so there is nothing left to pin, and
       # the two tokens the notebook used to inject are minted below.
-      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) && !inputs.local_runner }}
+      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg", "polars"]'), matrix.engine) && !inputs.local_runner }}
       # A SIZE. `local_runner` is a PLACE, which is why it is a boolean input of its own and not
       # a `local` option here: remote_dbt.py reads this as int(), so folding the place into the
       # size would put a non-numeric value in front of that int() on every run with the toggle
@@ -324,7 +325,7 @@ jobs:
         # under test. ducklake needs the same secret for its parquet and its Delta export.
         # Same incantation as the compact job. duckrun needs nothing: it mints from the OIDC
         # assertion and gets no azure/login.
-        if: env.REMOTE != 'true' && (matrix.engine == 'iceberg' || matrix.engine == 'ducklake')
+        if: env.REMOTE != 'true' && (matrix.engine == 'iceberg' || matrix.engine == 'ducklake' || matrix.engine == 'polars')
         run: |
           TOKEN=$(az account get-access-token --resource https://storage.azure.com/ --query accessToken -o tsv)
           echo "::add-mask::$TOKEN"

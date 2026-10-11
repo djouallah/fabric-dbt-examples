@@ -24,6 +24,8 @@ DIALECT = {
     "ducklake": "duckdb",
     "dwh": "tsql",
     "spark": "spark",
+    # Polars SQL is closest to DuckDB's; sqlglot has no polars dialect.
+    "polars": "duckdb",
 }
 
 

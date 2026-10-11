@@ -151,11 +151,11 @@ def test_the_gate_matches_what_pipeline_run_name_actually_says():
         return any(t in title for t in tokens)
 
     assert publishes("all"), (
-        f"a five-engine run renders {head + branch.group(1) + tail!r}, which the gate does "
+        f"an all-engine run renders {head + branch.group(1) + tail!r}, which the gate does "
         f"not match -- the page would never be published again"
     )
     assert publishes(ENGINE), f"an engines: {ENGINE} run does not publish the page"
-    for other in ("iceberg", "ducklake", "dwh", "spark"):
+    for other in ("iceberg", "ducklake", "dwh", "spark", "polars"):
         assert not publishes(other), (
             f"engines: {other} builds none of duckrun's tables, but the gate matches the "
             f"title it renders -- the page would be republished unchanged"

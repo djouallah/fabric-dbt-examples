@@ -54,7 +54,7 @@ REPO = Path(__file__).resolve().parents[2]
 # tests_py/test_local_runner.py asserts this subset and pipeline.yml's dwh/spark build step
 # partition the five between them -- an engine in neither reaches no build step at all, which
 # is silent and green.
-PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1"}
+PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1", "polars": "dbt1"}
 
 argv = sys.argv[1:]
 # DEFAULT ON, and the polarity is load-bearing. The Fabric path and the demo notebook need the

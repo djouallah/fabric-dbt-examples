@@ -1,19 +1,3 @@
-# The dbt-polars SMOKE TEST, not an engine.
-#
-# DELIBERATELY NOT NAMED requirements/polars.txt. That stem is how pipeline.yml resolves an
-# ENGINE's dependencies (`requirements/${ENGINE}.txt`). Polars is a candidate, not a sixth
-# engine.
-#
-# FROM THE FORK until datamindedbe/incubator-dbt-polars#30 is merged and released: it fixes
-# #29 (a file source always ends in lower-case `.csv`, so AEMO's `.CSV` files cannot be a
-# source). Pinned to the PR's head commit, so the log measures exactly that code. The fix
-# spans the core package and the azure catalog, which are separate packages in one repo, so
-# all three come from the same commit; the catalogs pin dbt-polars==<core version> and the
-# fork keeps 0.3.1, which they satisfy. When a release carries #30, go back to the unpinned
-# PyPI line: `dbt-polars[iceberg,azure]`.
-#
-# `iceberg` brings pyiceberg (the OneLake Iceberg REST catalog), the azure catalog reads the
-# landed files in Files/.
-dbt-polars[iceberg] @ git+https://github.com/djouallah/incubator-dbt-polars@1d852ef700763e37d14703bfc06665d4784c5928
-dbt-polars-catalog-local @ git+https://github.com/djouallah/incubator-dbt-polars@1d852ef700763e37d14703bfc06665d4784c5928#subdirectory=catalogs/dbt-polars-catalog-local
-dbt-polars-catalog-azure @ git+https://github.com/djouallah/incubator-dbt-polars@1d852ef700763e37d14703bfc06665d4784c5928#subdirectory=catalogs/dbt-polars-catalog-azure
+# The dbt-polars SMOKE TEST, not the engine: it installs exactly what the engine does, so a
+# probe measures the adapter the polars leg runs on. The pin and its reasons are in polars.txt.
+-r polars.txt

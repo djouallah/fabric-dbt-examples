@@ -60,6 +60,7 @@ ENGINES = {
     "ducklake": "dbt1",
     "dwh": "dbt1",
     "spark": "dbt1",
+    "polars": "dbt1",
 }
 
 MODELS = {
@@ -91,6 +92,8 @@ DUMMY_ENV = {
     "FABRIC_WORKSPACE_ID": "00000000-0000-0000-0000-000000000000",
     "FABRIC_LAKEHOUSE_ID": "11111111-1111-1111-1111-111111111111",
     "FABRIC_LAKEHOUSE_NAME": "dummy",
+    "POLARS_LANDING_CONTAINER": "00000000-0000-0000-0000-000000000000",
+    "POLARS_LANDING_ITEM": "22222222-2222-2222-2222-222222222222",
     "DBT_SCHEMA": "mart",
 }
 
@@ -187,7 +190,8 @@ def dbt_installed(target: str) -> bool:
     # dbt1/macros/iceberg_adapter_overrides.sql has to branch on target.name.
     mod = {"duckrun": "dbt.adapters.duckrun", "iceberg": "dbt.adapters.duckdb",
            "ducklake": "dbt.adapters.duckdb",
-           "dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark"}[target]
+           "dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark",
+           "polars": "dbt.adapters.polars"}[target]
     try:
         return importlib.util.find_spec(mod) is not None
     except (ImportError, ValueError):

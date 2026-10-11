@@ -16,7 +16,7 @@ clean-targets: ["target", "dbt_packages"]
 # =====================================================================================
 # HOW ONE RUN SELECTS ONE ENGINE
 #
-# ONE PROJECT, dbt-core 1.x, FIVE ENGINES: duckrun, iceberg, ducklake, dwh, spark.
+# ONE PROJECT, dbt-core 1.x, SIX ENGINES: duckrun, iceberg, ducklake, dwh, spark, polars.
 #
 # It was briefly two projects: iceberg spent 2026-09-17 to 2026-09-18 in a ../dbt2 on dbt
 # OSS 2, whose catalogs.yml cannot sit in a dbt 1.x project root. That engine could not
@@ -146,6 +146,18 @@ models:
         +enabled: "{{ target.name == 'spark' }}"
         dimensions: {+schema: mart}
         marts:      {+schema: landing}
+      polars:
+        +enabled: "{{ target.name == 'polars' }}"
+        dimensions: {+schema: mart}
+        marts:      {+schema: landing}
+
+# The polars tree is the only one that declares sources (dbt-polars reads files no other way),
+# and they are gated like its models: on another target they would be dangling definitions.
+sources:
+  aemo_electricity:
+    aemo:
+      polars:
+        +enabled: "{{ target.name == 'polars' }}"
 
 data_tests:
   aemo_electricity:
@@ -162,3 +174,4 @@ data_tests:
       ducklake: {+enabled: "{{ target.name == 'ducklake' }}"}
       dwh:      {+enabled: "{{ target.name == 'dwh' }}"}
       spark:    {+enabled: "{{ target.name == 'spark' }}"}
+      polars:   {+enabled: "{{ target.name == 'polars' }}"}

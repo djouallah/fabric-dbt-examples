@@ -71,6 +71,7 @@ jobs:
           - {engine: ducklake, label: "🌊 duckdb · ducklake"}
           - {engine: dwh,      label: "🏢 fabric · warehouse"}
           - {engine: spark,    label: "⚡ fabric · spark"}
+          - {engine: polars,   label: "🐻‍❄️ polars · iceberg"}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

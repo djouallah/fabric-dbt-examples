@@ -1,9 +1,9 @@
 """The dbt-polars smoke test must stay a smoke test, and must stay SQL.
 
-.github/workflows/polars_smoke.yml probes whether dbt-polars could become a SIXTH engine. It
-is not one: it touches no gating, no parity, no deploy, and it is dispatch-only so it costs
-Fabric capacity only when somebody asks. These tests pin that absence, the way
-test_sail_smoke.py does for Sail.
+.github/workflows/polars_smoke.yml is the probe that made polars a SIXTH engine, and it stays
+a probe: it touches no gating, no parity, no deploy, and it is dispatch-only so it costs
+Fabric capacity only when somebody asks. The engine itself is `polars` in the five-engine
+layout's registries; this file only pins that the PROBE stays apart from it.
 
 They also pin the one rule of the probe itself: every model it builds is a SQL model. A
 Python model would measure a dataframe rewrite, not whether the gold layer's SQL runs.
@@ -18,7 +18,7 @@ import os
 import pytest
 import yaml
 
-from _layout import ENGINES, REPO
+from _layout import REPO
 
 SMOKE_PY = REPO / ".github" / "scripts" / "polars_smoke.py"
 SMOKE_YML = REPO / ".github" / "workflows" / "polars_smoke.yml"
@@ -49,18 +49,6 @@ def _probes(smoke):
 
 def _model(smoke, name):
     return next(p[3][name] for p in _probes(smoke) if p[3] and name in p[3])
-
-
-def test_polars_is_not_a_registered_engine():
-    assert "polars" not in ENGINES
-
-
-def test_there_is_no_engine_shaped_requirements_file():
-    assert not (REPO / "requirements" / "polars.txt").exists()
-
-
-def test_there_is_no_polars_model_tree():
-    assert not (REPO / "dbt1" / "models" / "aemo" / "polars").exists()
 
 
 def test_workflow_is_dispatch_only(workflow):
@@ -143,11 +131,18 @@ def test_sources_name_the_csv_files_as_written(smoke):
 
 
 def test_requirements_pin_one_fork_commit():
-    """Core and both catalogs from the same commit: the fix spans packages."""
-    reqs = [l for l in (REPO / "requirements" / "polars_smoke.txt").read_text().splitlines()
-            if l and not l.startswith("#")]
-    shas = {l.split("@")[-1].split("#")[0] for l in reqs}
+    """The engine's requirements: core and both catalogs from the same fork commit, as archive
+    URLs (the Fabric notebook may have no git). The fixes span packages."""
+    reqs = [l for l in (REPO / "requirements" / "polars.txt").read_text().splitlines()
+            if "incubator-dbt-polars" in l and not l.startswith("#")]
+    shas = {l.split("/archive/")[1].split(".zip")[0] for l in reqs}
     assert len(reqs) == 3 and len(shas) == 1 and len(shas.pop()) == 40
+    assert not any("git+" in l for l in reqs)
+
+
+def test_the_smoke_installs_the_engine_pin():
+    smoke = (REPO / "requirements" / "polars_smoke.txt").read_text()
+    assert "-r polars.txt" in smoke
 
 
 def test_picker_probe_uses_neither_hook_nor_merge_clauses(smoke):

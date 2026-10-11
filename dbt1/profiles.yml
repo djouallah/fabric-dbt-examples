@@ -98,3 +98,31 @@ aemo_electricity:
         conf:
           spark.fabric.resourceProfile: "{{ env_var('SPARK_RESOURCE_PROFILE', 'writeHeavy') }}"
           spark.native.enabled: "{{ env_var('SPARK_NATIVE_ENABLED', 'false') }}"
+
+    polars:
+      type: polars
+      database: onelake
+      schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
+      threads: 1
+      catalogs:
+        - name: onelake
+          type: iceberg
+          schema: "{{ env_var('DBT_SCHEMA', 'mart') }}"
+          pyiceberg_type: rest
+          uri: "{{ env_var('ONELAKE_ENDPOINT') }}"
+          warehouse: "{{ env_var('WAREHOUSE_PATH') }}"
+          adls.account-name: onelake
+          adls.account-host: onelake.blob.fabric.microsoft.com
+          token: "{{ env_var('ONELAKE_TOKEN') }}"
+          adls.token: "{{ env_var('ONELAKE_TOKEN') }}"
+        - name: landing
+          type: azure
+          schema: Files
+          account_name: onelake
+          container: "{{ env_var('POLARS_LANDING_CONTAINER') }}"
+          prefix: "{{ env_var('POLARS_LANDING_ITEM') }}"
+          credentials:
+            storage_options:
+              account_name: onelake
+              bearer_token: "{{ env_var('ONELAKE_TOKEN') }}"
+              use_fabric_endpoint: "true"

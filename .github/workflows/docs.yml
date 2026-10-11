@@ -90,7 +90,7 @@ jobs:
     # to YAML and keeps its newlines inside the `${{ }}`.
     if: >-
       ${{ github.event_name != 'workflow_run'
-      || contains(github.event.workflow_run.display_title, 'all five engines')
+      || contains(github.event.workflow_run.display_title, 'all six engines')
       || contains(github.event.workflow_run.display_title, 'duckrun') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30

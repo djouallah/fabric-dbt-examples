@@ -45,11 +45,12 @@ identity (AZURE_CLIENT_ID / AZURE_TENANT_ID, `id-token: write`) with item CRUD o
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-ENGINES = ("duckrun", "ducklake", "iceberg")
+ENGINES = ("duckrun", "ducklake", "iceberg", "polars")
 REPO = Path(__file__).resolve().parents[2]
 CORES = int(os.environ.get("FABRIC_CORES", "8"))
 
@@ -67,6 +68,7 @@ FORWARD = (
     "FILES_PATH", "ONELAKE_TABLES_PATH",
     "WAREHOUSE_PATH", "ONELAKE_ENDPOINT",
     "DUCKLAKE_CATALOG_DSN", "DUCKLAKE_DATA_PATH",
+    "POLARS_LANDING_CONTAINER", "POLARS_LANDING_ITEM",
     "DBT_SCHEMA", "DBT_THREADS",
     "process_limit",
 )
@@ -87,18 +89,33 @@ SETUP = {
         "os.environ['DBT_ENV_SECRET_SQL_TOKEN'] = "
         "notebookutils.credentials.getToken('https://database.windows.net/')\n"
     ),
+    # dbt-polars signs the Iceberg catalog, its data files and the landing zone's Files/ with
+    # this one storage token -- the profile hands it to both catalogs.
+    "polars": (
+        "import os, notebookutils\n"
+        "os.environ['ONELAKE_TOKEN'] = notebookutils.credentials.getToken('storage')\n"
+    ),
 }
 
 
 def pip_args(engine: str) -> list[str]:
     """requirements/<engine>.txt as pip arguments -- the SAME pins the runner installs, so the
     notebook builds with exactly the versions the gating job parsed with. Flags like `--pre`
-    stay flags."""
+    stay flags.
+
+    A comment is pip's: `#` at the start of a line or after whitespace, never the `#` of a
+    URL fragment -- requirements/polars.txt installs from archive URLs ending in
+    `#subdirectory=...`. And a requirement stays ONE argument: `pkg @ <url>` split on its
+    spaces would hand pip three."""
     args: list[str] = []
     for line in (REPO / "requirements" / f"{engine}.txt").read_text(encoding="utf-8").splitlines():
-        line = line.split("#", 1)[0].strip()
-        if line:
+        line = re.split(r"(?:^|\s)#", line, maxsplit=1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("-"):
             args.extend(line.split())
+        else:
+            args.append(line)
     return args
 
 
