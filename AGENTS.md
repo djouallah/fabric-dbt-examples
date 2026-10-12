@@ -392,6 +392,10 @@ probe stays as the place to try an adapter question cheaply.
   `dim_duid` anti-join `{{ this }}` on their keys.
 - **TIMESTAMP, not TIMESTAMPTZ.** Polars SQL has no zoned type by any spelling. The one type
   difference from the other engines; the README says so.
+- **Polars SQL bugs filed upstream, worked around here:** an unqualified column in an
+  `IN (SELECT ...)` subquery is resolved against the outer tables and called ambiguous
+  (pola-rs/polars#29876 -- qualify it, or join the distinct set); a `WITH` inside a derived
+  table is not resolved (pola-rs/polars#29877 -- put it in a CTE).
 - **Polars SQL dialect:** no `GROUP BY ALL`, no `generate_series` (`dbt.date_spine`), no
   correlated or scalar subqueries in a select list (one-row `CROSS JOIN`s), `EXTRACT` for
   `YEAR()`, `INTERVAL '6 days'`. Headerless reads name columns from `column_0` on Polars 2 —

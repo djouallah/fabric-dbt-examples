@@ -91,7 +91,8 @@ today_rows AS (
     ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
   -- Only units the daily branch will be able to reproduce once this date settles. A join on
   -- the DISTINCT set rather than `IN (SELECT DUID ...)`: Polars SQL resolves the bare DUID in
-  -- that subquery against the outer s and d as well, and calls it ambiguous.
+  -- that subquery against the outer s and d as well, and calls it ambiguous
+  -- (pola-rs/polars#29876).
   JOIN dispatch_duids dd ON s.DUID = dd.DUID
   CROSS JOIN scada_cutoff c
   WHERE
