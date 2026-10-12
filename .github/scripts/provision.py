@@ -6,6 +6,12 @@
 Idempotent: every item is create-if-missing, keep-if-present. Diagnostics go to stderr so
 stdout is nothing but KEY=value lines.
 
+    python .github/scripts/provision.py --reset-destination
+
+is the one destructive call: it deletes the `dbt` lakehouse and the DuckLake catalog SQL DB
+(DESTINATION, below) so the next provisioning recreates them empty. Never `dbt_landing`.
+pipeline.yml runs it only when the `reset_destination` input is ticked (off by default).
+
 THREE ITEMS, ALL INSIDE ONE WORKSPACE FOLDER. The engines used to get one data item each,
 which put up to fourteen items at the root of a workspace that already has ~175 — and every
 lakehouse drags an auto-created SQLEndpoint shadow item along with it. They share one
@@ -130,6 +136,58 @@ def move_to_folder(item_id: str, folder_id: str) -> None:
         log(f"  ! could not move {item_id} into folder: {r.status_code} {r.text[:200]}")
 
 
+NAME_NOT_AVAILABLE = "ItemDisplayNameNotAvailableYet"
+
+
+def create(kind: str, body: dict):
+    """POST a new item, waiting out the name Fabric keeps reserved for a while after a delete
+    (409 ItemDisplayNameNotAvailableYet) -- which is exactly the state reset_destination()
+    leaves `dbt` and the catalog SQL DB in."""
+    for _ in range(40):
+        r = req("POST", f"workspaces/{WS}/{kind}", json=body)
+        if r.status_code != 409 or NAME_NOT_AVAILABLE not in r.text:
+            return r
+        log(f"  … {body['displayName']}: name not available yet after a delete; waiting")
+        time.sleep(30)
+    return r
+
+
+# THE DESTINATION, AND ONLY THE DESTINATION. reset_destination() deletes these two items and
+# nothing else: the shared `dbt` lakehouse (every engine's gold layer) and the DuckLake catalog
+# SQL DB. The catalog has to go WITH the lakehouse: it records the lakehouse's abfss data_path on
+# first attach and refuses a different one afterwards, and its snapshots name files that would
+# no longer exist. `dbt_landing` -- the CSVs and the archive log every engine reads -- is never
+# in this list; reset_destination() refuses to run if it ever is.
+DESTINATION = (("lakehouses", DATA_LAKEHOUSE), ("sqlDatabases", DUCKLAKE_SQL_DB))
+
+
+def reset_destination() -> None:
+    """Delete the destination items so this run's provisioning recreates them empty. Every
+    engine then does a first build -- the way to clear a gold layer that drifted from the
+    landing zone in a way incremental runs cannot retract."""
+    if LANDING_LAKEHOUSE in {name for _, name in DESTINATION}:
+        raise SystemExit(f"refusing: {LANDING_LAKEHOUSE} is in DESTINATION")
+    landing_id = find("lakehouses", LANDING_LAKEHOUSE)
+    for kind, name in DESTINATION:
+        item_id = find(kind, name)
+        if not item_id:
+            log(f"  = {kind[:-1]} {name} absent; nothing to delete")
+            continue
+        if item_id == landing_id:
+            raise SystemExit(f"refusing: {name} resolved to the landing lakehouse ({item_id})")
+        r = req("DELETE", f"workspaces/{WS}/items/{item_id}")
+        if r.status_code not in (200, 202, 204):
+            raise SystemExit(f"could not delete {kind[:-1]} {name} ({item_id}): "
+                             f"{r.status_code} {r.text[:300]}")
+        log(f"  - deleted {kind[:-1]} {name} ({item_id})")
+        for _ in range(40):
+            if not find(kind, name):
+                break
+            time.sleep(15)
+        else:
+            raise SystemExit(f"{kind[:-1]} {name} still listed after delete")
+
+
 def ensure(kind: str, name: str, payload: dict | None = None,
            folder_id: str | None = None) -> str:
     """Create if missing, keep if present, and land it in the folder either way."""
@@ -144,7 +202,7 @@ def ensure(kind: str, name: str, payload: dict | None = None,
         body.update(payload)
     if folder_id:
         body["folderId"] = folder_id
-    r = req("POST", f"workspaces/{WS}/{kind}", json=body)
+    r = create(kind, body)
     if r.status_code in (200, 201, 202):
         # Fabric answers 409 ItemDisplayNameNotAvailableYet for a while after a delete, and
         # the create itself can be async, so poll for the item rather than trusting the body.
@@ -164,8 +222,13 @@ def abfss(item_id: str, section: str) -> str:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--reset-destination"]:
+        log(f"resetting the destination in workspace {WS} ({LANDING_LAKEHOUSE} is kept)")
+        reset_destination()
+        return 0
     if len(sys.argv) != 2 or sys.argv[1] not in ENGINES:
-        print(f"usage: provision.py [{' | '.join(sorted(ENGINES))}]", file=sys.stderr)
+        print(f"usage: provision.py [{' | '.join(sorted(ENGINES))} | --reset-destination]",
+              file=sys.stderr)
         return 2
     engine = sys.argv[1]
 
@@ -244,7 +307,7 @@ def main() -> int:
             }
             if folder_id:
                 body["folderId"] = folder_id
-            r = req("POST", f"workspaces/{WS}/sqlDatabases", json=body)
+            r = create("sqlDatabases", body)
             log(f"  + created SQL DB {DUCKLAKE_SQL_DB}: {r.status_code}")
             if r.status_code not in (200, 201, 202):
                 # Fail here with the body rather than polling for something that is not coming.

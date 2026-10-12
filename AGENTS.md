@@ -113,6 +113,13 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   resolving to the same schema would overwrite each other's gold layer inside one item with
   every test still green, because each run would see a perfectly consistent table.
   `check_gating.py` asserts `<engine>_landing` / `<engine>_mart` offline; do not weaken it.
+- **`reset_destination` (pipeline input, off by default) deletes the DESTINATION, never the
+  landing.** `provision.py --reset-destination`, in the `land` job before provisioning, deletes
+  `dbt` and the DuckLake catalog SQL DB (`provision.DESTINATION`) and lets provisioning recreate
+  them empty, so every engine does a first build. The catalog goes WITH the lakehouse: it
+  stores the lakehouse's `data_path` on first attach and its snapshots name files that would be
+  gone. `dbt_landing` is refused by name and by GUID; `tests_py/test_reset_destination.py` pins
+  it. The Direct Lake models bind the old GUID, so redeploy them (`deploy: full`) after.
 - **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** `download_aemo.py`
   writes to `LANDING_PATH`, which is identical on all five legs; `FILES_PATH` is how that
   engine's dbt READS the zone. They were one variable, and `provision.py` re-pointed it for

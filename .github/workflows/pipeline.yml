@@ -42,6 +42,10 @@ on:
         description: Files each fact model folds per run, NEWEST first (every engine honours it; a backlog converges over runs and shows as test WARNINGS, not failures). Small by default because every leg builds on the 7 GB runner.
         type: string
         default: "50"
+      reset_destination:
+        description: DELETE the destination first — the shared `dbt` lakehouse (every engine's gold layer) and the DuckLake catalog SQL DB — so every engine rebuilds from empty. Never touches dbt_landing (the CSVs). Direct Lake models must be redeployed afterwards (deploy = full).
+        type: boolean
+        default: false
       deploy:
         description: Deploy the in-Fabric demo after the build? (the items are always provisioned) none = skip; no_model = everything except the semantic models; full = everything
         type: choice
@@ -143,6 +147,7 @@ jobs:
       RUNIN_MODE: ${{ inputs.mode }}
       RUNIN_DBT_SCHEMA: ${{ inputs.dbt_schema }}
       RUNIN_PROCESS_LIMIT: ${{ inputs.process_limit }}
+      RUNIN_RESET_DESTINATION: ${{ inputs.reset_destination }}
       RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
       RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
@@ -172,6 +177,14 @@ jobs:
         run: |
           echo "RUN_RECORD=$RUNNER_TEMP/record/record-00-run.json" >> "$GITHUB_ENV"
           RUN_RECORD="$RUNNER_TEMP/record/record-00-run.json" python .github/scripts/record.py init
+      # Opt-in and destructive: deletes `dbt` and the DuckLake catalog SQL DB (provision.py's
+      # DESTINATION -- never dbt_landing), so the provisioning below recreates them empty and
+      # every leg does a first build. HERE, in the one job every leg waits for, so no leg can be
+      # writing into the lakehouse while it goes, and DATA_LAKEHOUSE_ID below is the NEW GUID.
+      # The ducklake leg recreates its catalog itself (provision.py ducklake).
+      - name: Reset the destination
+        if: inputs.reset_destination
+        run: python .github/scripts/provision.py --reset-destination
       - name: Provision the shared items
         run: python .github/scripts/provision.py duckrun >> "$GITHUB_ENV"
       - name: Expose the shared lakehouse to the compact job
