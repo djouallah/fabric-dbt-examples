@@ -67,14 +67,16 @@ WITH
     SELECT * FROM duid_wa
   ),
 
+  -- geo_data.csv's header says DUID. The DuckDB copies write `duid`, which DuckDB resolves
+  -- case-insensitively; Polars SQL matches column names exactly.
   geo AS (
     SELECT
-      duid,
+      DUID AS duid,
       max(latitude) AS latitude,
       max(longitude) AS longitude
     FROM {{ source('polars_duid', 'geo_data') }}
     WHERE latitude IS NOT NULL
-    GROUP BY duid
+    GROUP BY DUID
   ),
 
   batch AS (

@@ -8,13 +8,18 @@
     incremental_strategy='append'
 ) }}
 
+{#-- The spine as a CTE, never a subquery: it is a WITH of its own, and Polars SQL resolves a
+     nested WITH inside a CTE but not inside FROM ( ... ) ("relation 'filtered' was not
+     found"). --#}
+WITH spine AS (
+  {{ dbt.date_spine('day', "CAST('2018-04-01' AS DATE)", "CAST('2027-01-01' AS DATE)") }}
+)
+
 SELECT
   CAST(date_day AS DATE) AS date,
   CAST(EXTRACT(year FROM date_day) AS INT) AS year,
   CAST(EXTRACT(month FROM date_day) AS INT) AS month
-FROM (
-  {{ dbt.date_spine('day', "CAST('2018-04-01' AS DATE)", "CAST('2027-01-01' AS DATE)") }}
-) AS spine
+FROM spine
 {% if is_incremental() %}
 WHERE CAST(date_day AS DATE) NOT IN (SELECT date FROM {{ this }})
 {% endif %}
