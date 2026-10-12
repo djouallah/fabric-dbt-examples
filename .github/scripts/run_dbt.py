@@ -182,12 +182,10 @@ if fingerprint_out:
     sys.path.insert(0, str(REPO / ".github" / "scripts"))
     import parity  # noqa: E402
 
-    fp = parity.extract("
-".join(logged))
+    fp = parity.extract("\n".join(logged))
     if fp is None:
         sys.exit("fingerprint failed: no JSON in the run-operation's log")
     Path(fingerprint_out).parent.mkdir(parents=True, exist_ok=True)
-    Path(fingerprint_out).write_text(json.dumps(fp, indent=2) + "
-", encoding="utf-8")
+    Path(fingerprint_out).write_text(json.dumps(fp, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {fingerprint_out}: {fp['rows_total']:,} rows, {fp['duids']} DUIDs, "
           f"{fp['days']} days", flush=True)
