@@ -37,9 +37,8 @@ DBT_SCHEMA prefixes it here exactly as it does there.
 ORDER MATTERS: a Direct Lake model is REFRAMED on deploy, which needs <schema>.fct_summary to
 exist -- which is why `models` is deployed after the build.
 
-dwh binds the same bim to the Warehouse item (Direct Lake on OneLake: a warehouse's tables are
-Delta in OneLake). The lakehouse engines share one lakehouse and are separated by schema, so
-their models differ in that one string only.
+Every engine writes into one shared lakehouse, separated by schema, so the models differ in
+that one string only.
 """
 from __future__ import annotations
 
@@ -56,7 +55,7 @@ REPO = Path(__file__).resolve().parent
 SCRIPTS = REPO / ".github" / "scripts"
 MODEL_DIR = REPO / "semantic_model" / "aemo_electricity.SemanticModel"
 BIM = MODEL_DIR / "model.bim"
-ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark", "polars")
+ENGINES = ("duckrun", "iceberg", "ducklake", "spark", "polars")
 PARTS = ("repo", "items", "models", "schedule")
 
 # Desktop's GUIDs in model.bim's OneLake expression: <workspace>/<lakehouse>.
@@ -175,8 +174,7 @@ def deploy_models(provision) -> None:
         stage = Path(tmp)
         for engine in DEPLOY_ENGINES:
             schema = mart_schema(engine)
-            item_id = (provision.find("warehouses", provision.DWH_WAREHOUSE)
-                       if engine == "dwh" else data_id)
+            item_id = data_id
             name = f"aemo_{engine}"
             d = stage / f"{name}.SemanticModel"
             shutil.copytree(MODEL_DIR, d)

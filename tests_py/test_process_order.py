@@ -35,7 +35,6 @@ DUCKDB_MODELS = [
     for model in ("fct_price", "fct_price_today", "fct_scada", "fct_scada_today")
 ]
 MACROS = [
-    REPO / "dbt1" / "macros" / "new_source_files.sql",    # dwh
     REPO / "dbt1" / "macros" / "spark_new_files.sql",     # spark
 ]
 # polars picks its files at parse time in one shared macro (dbt-polars has no SQL hooks), and
@@ -96,7 +95,7 @@ def test_the_downloader_lands_newest_first():
     )
 
 
-@pytest.mark.parametrize("engine", ["duckrun", "iceberg", "ducklake", "dwh", "spark", "polars"])
+@pytest.mark.parametrize("engine", ["duckrun", "iceberg", "ducklake", "spark", "polars"])
 def test_a_backlog_is_a_warning_on_every_engine(engine):
     """These five go red for files that have merely not been folded YET. That is not a defect
     -- the data is correct, just incomplete, and it converges run by run -- and a red build

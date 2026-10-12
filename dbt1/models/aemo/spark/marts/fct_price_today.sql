@@ -4,14 +4,13 @@
 {%- set cast_cols = aemo_cast_columns('price_today') -%}
 {#-- The CSV read happens in the two pre_hooks and lands in <model>__stage; this body only
      casts and parses. See macros/spark_read_csv.sql and the fct_price.sql header. --#}
-{#-- Insert-only merge, not append -- skip_matched_step drops the WHEN MATCHED branch. See the
+{#-- Merge on the natural key, not append -- a match only happens when two runs fold the same file. See the
      fct_price.sql header for why. --#}
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
     file_format='delta',
     unique_key=['file', 'REGIONID', 'SETTLEMENTDATE', 'INTERVENTION'],
-    skip_matched_step=true,
     pre_hook=["{{ spark_stage_view('price_today') }}", "{{ spark_stage_table('price_today') }}"],
     post_hook="{{ spark_drop_stage() }}"
 ) }}

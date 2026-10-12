@@ -92,6 +92,17 @@ def list_keys(base: str) -> list[str]:
     return keys
 
 
+def list_dirs(base: str) -> list[str]:
+    """The immediate sub-folders of `base` (names only). [] when `base` does not exist."""
+    import obstore
+
+    try:
+        res = obstore.list_with_delimiter(store(base))
+    except FileNotFoundError:
+        return []
+    return [p.rstrip("/").rsplit("/", 1)[-1] for p in res["common_prefixes"]]
+
+
 def delete(base: str, key: str) -> None:
     """Delete one object. On OneLake a raw DFS DELETE (see the module docstring)."""
     if not is_remote(base):

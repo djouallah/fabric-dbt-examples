@@ -11,10 +11,9 @@
 
      THE HOOKS STAY ONE STRING LITERAL EACH, WITH THE MACRO CALL UNEVALUATED. dbt renders
      hooks at run time, and only then are `this` and is_incremental() bound. --#}
-{#-- Insert-only merge, not append. skip_matched_step drops the WHEN MATCHED branch entirely
-     (dbt-fabricspark honours it in fabricspark__get_merge_sql), so this is MERGE ... WHEN NOT
-     MATCHED THEN INSERT and nothing else -- the right shape for append-only data, and it
-     cannot hit a multiple-source-row match error because there is no matched clause.
+{#-- Merge on the natural key, not append. dbt-spark has no skip_matched_step (that was
+     dbt-fabricspark's), so a matched key UPDATEs -- and it only ever matches when two runs
+     fold the same file, where the update rewrites identical values.
 
      Why not append: the file list excludes files already in {{ this }}, but that list is
      computed BEFORE the write. Two overlapping runs both see a file as new and both append
@@ -24,7 +23,6 @@
     incremental_strategy='merge',
     file_format='delta',
     unique_key=['file', 'REGIONID', 'SETTLEMENTDATE', 'INTERVENTION'],
-    skip_matched_step=true,
     pre_hook=["{{ spark_stage_view('price') }}", "{{ spark_stage_table('price') }}"],
     post_hook="{{ spark_drop_stage() }}"
 ) }}

@@ -2,7 +2,7 @@ name: pipeline
 
 # Display only. The run page's title, instead of "pipeline #NN" -- what this run actually is,
 # legible in a screenshot without reading the inputs.
-run-name: pipeline — ${{ inputs.engines == 'all' && 'all six engines' || inputs.engines }}, one gold layer
+run-name: pipeline — ${{ inputs.engines == 'all' && 'all five engines' || inputs.engines }}, one gold layer
 
 # Builds the same models on every engine, proves they agree, and writes down what the run
 # touched and what it wrote (history/runs/); the Capacity units workflow then adds what it cost.
@@ -20,9 +20,9 @@ on:
         description: Which engines to build
         type: choice
         default: all
-        options: [all, duckrun, iceberg, ducklake, dwh, spark, polars]
+        options: [all, duckrun, iceberg, ducklake, spark, polars]
       mode:
-        description: WHERE dbt runs. local = every engine builds on this GitHub runner. fabric = deploy the items with fabric-cicd and run the deployed pipeline in Fabric (duckrun, iceberg, ducklake, polars); dwh and spark are Fabric-compute clients and build from the runner either way.
+        description: WHERE dbt runs. local = every engine builds on this GitHub runner. fabric = deploy the items with fabric-cicd and run the deployed pipeline in Fabric (duckrun, iceberg, ducklake, polars); spark is local PySpark and builds on the runner either way.
         type: choice
         default: local
         options: [local, fabric]
@@ -38,11 +38,6 @@ on:
         description: Daily archive files per run (backfilled from GitHub, so a higher limit is safe)
         type: string
         default: "60"
-      spark_resource_profile:
-        description: readHeavyForPBI (V-Order on, Power BI-facing layout) or writeHeavy (the Fabric workspace default)
-        type: choice
-        default: readHeavyForPBI
-        options: [readHeavyForPBI, writeHeavy]
       process_limit:
         description: Files each fact model folds per run, NEWEST first (every engine honours it; a backlog converges over runs and shows as test WARNINGS, not failures). Small by default because every leg builds on the 7 GB runner.
         type: string
@@ -59,7 +54,7 @@ permissions:
 
 concurrency:
   # Never two of these against one workspace. NOT cancel-in-progress: cancelling a GitHub
-  # job does not stop Fabric — the notebook or Livy session keeps running, and billing.
+  # job does not stop Fabric — a started notebook keeps running, and billing.
   group: pipeline-${{ github.ref_name }}
   cancel-in-progress: false
 
@@ -77,7 +72,7 @@ jobs:
       engines: ${{ steps.pick.outputs.engines }}
       # Split by WHERE each builds: `local` on this runner (the build job), `fabric` through the
       # deployed pipeline (the fabric job). In local mode everything is local. In fabric mode
-      # the four in-process engines go to Fabric; dwh and spark stay clients on the runner.
+      # the four notebook engines go to Fabric; spark (local PySpark) stays on the runner.
       local: ${{ steps.pick.outputs.local }}
       fabric: ${{ steps.pick.outputs.fabric }}
     steps:
@@ -97,8 +92,7 @@ jobs:
           ALL='[{"engine":"duckrun","label":"🦆 duckdb · delta-rs"},
                 {"engine":"iceberg","label":"🧊 duckdb · iceberg"},
                 {"engine":"ducklake","label":"🌊 duckdb · ducklake"},
-                {"engine":"dwh","label":"🏢 fabric · warehouse"},
-                {"engine":"spark","label":"⚡ fabric · spark"},
+                {"engine":"spark","label":"⚡ pyspark · delta"},
                 {"engine":"polars","label":"🐻‍❄️ polars · iceberg"}]'
           if [ "${{ inputs.engines }}" = "all" ]; then
             SEL=$(echo "$ALL" | jq -c .)
@@ -107,8 +101,8 @@ jobs:
           fi
           echo "engines=$SEL" >> "$GITHUB_OUTPUT"
           if [ "${{ inputs.mode }}" = "fabric" ]; then
-            echo "local=$(echo "$SEL" | jq -c '[.[]|select(.engine=="dwh" or .engine=="spark")]')" >> "$GITHUB_OUTPUT"
-            echo "fabric=$(echo "$SEL" | jq -c '[.[]|select(.engine!="dwh" and .engine!="spark")]')" >> "$GITHUB_OUTPUT"
+            echo "local=$(echo "$SEL" | jq -c '[.[]|select(.engine=="spark")]')" >> "$GITHUB_OUTPUT"
+            echo "fabric=$(echo "$SEL" | jq -c '[.[]|select(.engine!="spark")]')" >> "$GITHUB_OUTPUT"
           else
             echo "local=$SEL" >> "$GITHUB_OUTPUT"
             echo "fabric=[]" >> "$GITHUB_OUTPUT"
@@ -149,7 +143,6 @@ jobs:
       RUNIN_MODE: ${{ inputs.mode }}
       RUNIN_DBT_SCHEMA: ${{ inputs.dbt_schema }}
       RUNIN_PROCESS_LIMIT: ${{ inputs.process_limit }}
-      RUNIN_SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
       RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
@@ -196,12 +189,11 @@ jobs:
   # ONE LEG PER ENGINE: build it, test it, fingerprint its gold table. Landing already happened
   # ONCE, above, which is the only reason these can run at the same time.
   #
-  # WHERE dbt RUNS: on this runner, every engine. For duckrun, iceberg, ducklake and polars the
-  # runner IS the compute -- DuckDB / Polars fold the archive in memory on its 7 GB, which is
-  # why process_limit defaults small and a backlog converges over runs (the DuckDB legs were
-  # OOM-killed here folding a whole backlog at once). For dwh and spark dbt is only a client;
-  # the compute is the Warehouse / the Livy session. Running in Fabric is the other mode:
-  # deploy the items and run the deployed pipeline (`deploy`, below).
+  # WHERE dbt RUNS: on this runner, every engine, in-process through run_dbt.py -- the runner IS
+  # the compute. DuckDB, Polars and local PySpark fold their batch in its 7 GB, which is why
+  # process_limit defaults small and a backlog converges over runs (the DuckDB legs were
+  # OOM-killed here folding a whole backlog at once). Running in Fabric is the other mode:
+  # deploy the items and run the deployed pipeline (the fabric jobs, below).
   #
   # Deliberately NO `--select` anywhere: model selection is entirely +enabled in
   # dbt_project.yml, keyed on the target name.
@@ -227,15 +219,11 @@ jobs:
       ENGINE: ${{ matrix.engine }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       process_limit: ${{ inputs.process_limit }}
-      SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       # Off a Fabric notebook DuckDB's azure extension needs the curl transport and the
       # system CA bundle.
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       DUCKDB_TEMP_DIR: /tmp/duckdb_spill
-      # dbt-fabricspark 1.13.0 runs OPTIMIZE after every Delta build, which rewrites the
-      # layout the run just produced.
-      DBT_FABRICSPARK_SKIP_OPTIMIZE: "true"
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
@@ -284,16 +272,6 @@ jobs:
       - name: Provision Fabric items
         run: python .github/scripts/provision.py "$ENGINE" >> "$GITHUB_ENV"
 
-      - name: Capture Warehouse SQL token
-        if: matrix.engine == 'dwh'
-        # Captured HERE, not lazily at dbt-run time: the OIDC client assertion lasts only
-        # ~5 minutes, and provisioning above can outlive it. Without this the run dies at the
-        # first model with AADSTS700024.
-        run: |
-          TOKEN=$(az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv)
-          echo "::add-mask::$TOKEN"
-          echo "FABRIC_ACCESS_TOKEN=$TOKEN" >> "$GITHUB_ENV"
-
       - name: Mint OneLake token
         # For the legs whose profile carries an `azure` secret or a catalog bearer:
         # env_var('ONELAKE_TOKEN') has NO default -- dbt dies at profile render without this.
@@ -310,12 +288,12 @@ jobs:
 
       - name: Mint the DuckLake catalog token
         # ducklake's catalog is a Fabric SQL DB, so a local leg needs a database.windows.net
-        # bearer as well -- the same audience the dwh leg captures above, handed to the catalog
+        # bearer as well, handed to the catalog
         # connection by the profile's meta_access_token.
         # HERE AND NOT IN provision.py: that script's stdout is redirected straight into
         # $GITHUB_ENV, so a token emitted there would never pass through ::add-mask:: and would
         # sit unmasked in the job's environment. That is why provision.py emits this only when
-        # GITHUB_ACTIONS is unset. Minted AFTER provisioning, like the dwh one: creating the SQL
+        # GITHUB_ACTIONS is unset. Minted AFTER provisioning: creating the SQL
         # DB can outlive a token. And unlike ONELAKE_TOKEN this one HAS a '' default in the
         # profile, so forgetting it does not fail at render -- the leg dies later at the DuckLake
         # ATTACH, on a login error that reads like a catalog fault.
@@ -342,41 +320,15 @@ jobs:
       # ---- build -------------------------------------------------------------------
       - name: dbt build on this runner
         # THE SAME SCRIPT the deployed Fabric notebook runs: build, the 40613 loop that waits out
-        # ducklake's auto-paused catalog, then `dbt retry` ONLY if the build got far enough to
-        # write run_results.json. It chdir's into dbt1/ itself, hence no working-directory here.
-        # --no-fingerprint: the fingerprint is the step below, the one every leg shares.
-        # THE COMPLEMENT of the two client engines, deliberately: an engine added to the matrix
-        # reaches this step automatically, and one run_dbt.py does not know dies on its usage
-        # line instead of quietly building nothing while the fingerprint step publishes the
-        # previous run's numbers.
-        if: matrix.engine != 'dwh' && matrix.engine != 'spark'
+        # ducklake's auto-paused catalog, `dbt retry` ONLY if the build got far enough to write
+        # run_results.json, then the parity fingerprint -- in-process, so spark's session (jars,
+        # OneLake auth, registered tables) is the one that reads it. It chdir's into dbt1/
+        # itself, hence no working-directory here. Every engine, no condition: an engine
+        # run_dbt.py does not know dies on its usage line instead of building nothing.
         env:
           # A long build whose log only appears at the end is not a verification mode.
           PYTHONUNBUFFERED: "1"
-        run: python .github/scripts/run_dbt.py "$ENGINE" --no-fingerprint
-
-      - name: dbt build
-        # dwh and spark. dbt is only a CLIENT here -- the compute is the Warehouse / the Livy
-        # session -- so they stay a plain
-        # `dbt` subprocess, which is also what keeps check_gating.py's DBT_BIN escape hatch
-        # working off CI. Moving them onto run_dbt.py is a change with its own question behind it
-        # and nothing offline can judge it.
-        if: matrix.engine == 'dwh' || matrix.engine == 'spark'
-        working-directory: dbt1
-        # `dbt retry` needs --target too, or it renders the profile's default target.
-        run: |
-          dbt build --target "$ENGINE" --profiles-dir . \
-            || dbt retry --target "$ENGINE" --profiles-dir .
-
-      # ---- fingerprint -------------------------------------------------------------
-      - name: Fingerprint gold layer
-        working-directory: dbt1
-        # EVERY leg -- the in-process ones pass --no-fingerprint above precisely so this stays
-        # the only one. parity.py is addressed through $GITHUB_WORKSPACE: this step's
-        # cwd is the project, not the repo root, and the artifact path below is repo-relative.
-        run: |
-          dbt run-operation parity_fingerprint --target "$ENGINE" --profiles-dir . \
-            | python "$GITHUB_WORKSPACE/.github/scripts/parity.py" capture "$GITHUB_WORKSPACE/history/parity"
+        run: python .github/scripts/run_dbt.py "$ENGINE" --fingerprint-out "history/parity/$ENGINE.json"
 
       - uses: actions/upload-artifact@v6
         if: always()
@@ -385,9 +337,8 @@ jobs:
           path: history/parity/${{ matrix.engine }}.json
           if-no-files-found: warn
 
-      # AFTER the fingerprint, not after the build: on spark the run-operation opens a new
-      # Livy session and on dwh it is a full Warehouse Query, both billed. `job.status` is
-      # already `failure` once any earlier step failed, so no step ids are needed.
+      # `job.status` is already `failure` once any earlier step failed, so no step ids are
+      # needed.
       - name: Record leg end
         if: always()
         run: python .github/scripts/record.py leg-end "$ENGINE" "${{ job.status }}"
@@ -579,7 +530,6 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}
       # Only the engines this run built: reading an engine nobody rebuilt would record an
       # older generation's layout under this run's id.
       BUILD_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}

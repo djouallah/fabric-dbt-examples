@@ -85,7 +85,7 @@ def test_the_fingerprint_is_last_and_only_after_a_green_build():
     reports the PREVIOUS run's numbers, and parity.py grades this run on them -- the quietest
     possible way to pass the acceptance test without having produced anything."""
     src = source()
-    fp = src.index('run("run-operation", "parity_fingerprint")')
+    fp = src.index('run("run-operation", "parity_fingerprint"')
     assert src.index("sys.exit(1)") < fp, "the fingerprint is taken before the build's exit check"
     assert src.rindex('run("') == fp, "the fingerprint is not the last dbt command"
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The dbt commands ONE engine runs, WHEREVER that engine runs.
 
-    python .github/scripts/run_dbt.py <duckrun | iceberg | ducklake | polars> [--no-fingerprint]
+    python .github/scripts/run_dbt.py <duckrun | iceberg | ducklake | spark | polars>
+        [--no-fingerprint] [--fingerprint-out PATH]
 
 THE TWO MODES RUN THE SAME SEQUENCE -- build, the resume loop, a guarded `dbt retry`, the
 parity fingerprint -- so a local leg and a Fabric run are the same run on different hardware,
@@ -19,8 +20,9 @@ with no run_results.json for `dbt retry` to heal. See RESUME_SIGNATURE below.
 NOTHING HERE ASKS WHERE IT IS RUNNING. The environment is the caller's business -- see the
 DUCKDB_TEMP_DIR note below -- so there is no "am I in Fabric" test to get wrong.
 
-ALL THREE ARE dbt-core 1.x, INVOKED IN-PROCESS through dbtRunner. Keeping it in-process is
-worth it here: res.exception gives a real traceback in the log. There used to be a second path -- iceberg spent a day on
+EVERY ENGINE IS dbt-core 1.x, INVOKED IN-PROCESS through dbtRunner. In-process is what lets
+spark's session (spark_session.py) be built before dbt picks it up, and res.exception gives a
+real traceback in the log. There used to be a second path -- iceberg spent a day on
 dbt OSS 2, a Rust engine with no dbtRunner to import, launched as a subprocess out of a
 separate dbt2/ project. Both are gone with it.
 
@@ -28,11 +30,6 @@ THE FILE NAME MUST NOT START WITH `dbt_`. dbt 1.x's plugin manager imports every
 module whose name starts with dbt_ when a command starts, and this script's own directory is
 sys.path[0] -- so as dbt_in_fabric.py it was imported as a "plugin" during `dbt build` and
 re-executed itself recursively inside dbt's own invoke.
-
-dwh and spark do NOT come through here. dbt is only a client for them -- the compute is the
-Warehouse / the Livy session -- and moving them off a `dbt` subprocess onto dbtRunner is a change nothing offline can
-judge (it would also take away check_gating.py's DBT_BIN escape hatch, which needs an
-executable). PROJECT below is the shape that would take them if that is ever decided.
 
 In Fabric it runs as a subprocess of the notebook kernel with cwd = the unpacked repo, and the
 tokens are already in the environment (provision.py emits them there, minted by tokens.py from
@@ -46,17 +43,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-# engine -> project directory. The DuckDB SUBSET, not all five (see the docstring): tests_py's
-# _layout.PROJECT_OF holds every engine, check_gating.py's ENGINES holds every engine, and
-# tests_py/test_modes.py asserts this subset and pipeline.yml's dwh/spark build step
-# partition the five between them -- an engine in neither reaches no build step at all, which
-# is silent and green.
-PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1", "polars": "dbt1"}
+# engine -> project directory. EVERY engine: tests_py/test_modes.py asserts it matches
+# _layout.PROJECT_OF -- an engine missing here reaches no build at all, silent and green.
+PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1", "spark": "dbt1",
+           "polars": "dbt1"}
 
 argv = sys.argv[1:]
-# DEFAULT ON, and the polarity is load-bearing. The Fabric notebook needs the fingerprint in
-# THIS process; the runner passes --no-fingerprint and runs the same run-operation as a step of
-# its own, the one every local leg (dwh and spark too) already shares. An opt-IN flag would
+# DEFAULT ON, and the polarity is load-bearing: both modes fingerprint in THIS process (the
+# runner and the notebook pass --fingerprint-out to keep it as a file). An opt-IN flag would
 # mean a caller who forgets it publishes no fingerprint at all -- and a missing
 # history/parity/<engine>.json is invisible, because parity.py compare just reports it has
 # fewer than two to compare and exits 0. Forgetting an opt-OUT costs one redundant query.
@@ -65,6 +59,9 @@ fingerprint = "--no-fingerprint" not in argv
 # passes a lakehouse path, which is how CI reads a Fabric run's fingerprint back
 # (fabric_run.py) -- there is no streamed log to lift it out of.
 fingerprint_out = argv[argv.index("--fingerprint-out") + 1] if "--fingerprint-out" in argv else ""
+# Resolved NOW: the script chdir's into the project below, and a path given relative to the
+# caller's cwd (pipeline.yml passes history/parity/<engine>.json) must not move with it.
+fingerprint_out = str(Path(fingerprint_out).resolve()) if fingerprint_out else ""
 engine = next((a for i, a in enumerate(argv)
                if not a.startswith("--") and (i == 0 or argv[i - 1] != "--fingerprint-out")), "")
 if engine not in PROJECT:
@@ -95,20 +92,29 @@ BASE = ["--target", engine, "--profiles-dir", "."]
 LAST_ERROR = ""
 
 
-def run(*args) -> bool:
+def run(*args, callbacks=None) -> bool:
     """dbt-core 1.x, in-process. cwd is the project dir, which is how dbt finds the project."""
     global LAST_ERROR
     from dbt.cli.main import dbtRunner  # imported late: after the env is set
 
     print(f"=== dbt {' '.join(args)} ({engine}) ===", flush=True)
     t0 = time.time()
-    res = dbtRunner().invoke([*args, *BASE])
+    res = dbtRunner(callbacks=callbacks or []).invoke([*args, *BASE])
     print(f"=== dbt {args[0]}: success={res.success} in {int(time.time() - t0)}s ===", flush=True)
     LAST_ERROR = "" if res.success else str(res.exception or "")
     if res.exception:
         print(res.exception, flush=True)
     return bool(res.success)
 
+
+# spark: the SparkSession dbt-spark's `method: session` will getOrCreate() -- jars, Delta,
+# OneLake auth and the already-written tables registered. Built here because none of it can be
+# added once the JVM is up; spark_session.py says why each piece is there.
+if engine == "spark":
+    sys.path.insert(0, str(REPO / ".github" / "scripts"))
+    import spark_session  # noqa: E402
+
+    spark_session.start()
 
 # dbtRunner has no --project-dir equivalent that also moves the profiles lookup, and
 # --profiles-dir . is relative, so put the process in the project.
@@ -156,26 +162,32 @@ if not fingerprint:
 # Last, and only after a green build above: the run-operation reads the gold TABLE, not the run, so
 # taken after a failure it reports the previous run's numbers and parity.py would grade this
 # run on them.
-if not fingerprint_out:
-    sys.exit(0 if run("run-operation", "parity_fingerprint") else 1)
+# ONE in-process run-operation, with a callback that keeps what the macro log()s, so it can be
+# written to --fingerprint-out as well. In-process matters: spark's session (its jars, its
+# OneLake auth, its registered tables) lives in THIS process, and a `dbt` subprocess would
+# start a JVM with none of it.
+logged: list[str] = []
 
-# A file wanted: the same run-operation as a `dbt` subprocess, whose output parity.extract()
-# reads -- dbtRunner logs to this process's stdout, which it cannot capture cleanly.
-import json  # noqa: E402
-import shutil  # noqa: E402
-import subprocess  # noqa: E402
 
-sys.path.insert(0, str(REPO / ".github" / "scripts"))
-import parity  # noqa: E402
+def keep_log(event) -> None:
+    if event.info.name.startswith("JinjaLog"):
+        logged.append(event.info.msg)
 
-dbt = shutil.which("dbt") or str(Path(sys.executable).parent / "dbt")
-res = subprocess.run([dbt, "run-operation", "parity_fingerprint", *BASE],
-                     capture_output=True, text=True)
-print(res.stdout, flush=True)
-fp = parity.extract(res.stdout)
-if res.returncode or fp is None:
-    print(res.stderr[-2000:], file=sys.stderr)
-    sys.exit("fingerprint failed: no JSON in the run-operation output")
-Path(fingerprint_out).parent.mkdir(parents=True, exist_ok=True)
-Path(fingerprint_out).write_text(json.dumps(fp, indent=2) + "\n", encoding="utf-8")
-print(f"wrote {fingerprint_out}", flush=True)
+
+if not run("run-operation", "parity_fingerprint", callbacks=[keep_log]):
+    sys.exit(1)
+if fingerprint_out:
+    import json  # noqa: E402
+
+    sys.path.insert(0, str(REPO / ".github" / "scripts"))
+    import parity  # noqa: E402
+
+    fp = parity.extract("
+".join(logged))
+    if fp is None:
+        sys.exit("fingerprint failed: no JSON in the run-operation's log")
+    Path(fingerprint_out).parent.mkdir(parents=True, exist_ok=True)
+    Path(fingerprint_out).write_text(json.dumps(fp, indent=2) + "
+", encoding="utf-8")
+    print(f"wrote {fingerprint_out}: {fp['rows_total']:,} rows, {fp['duids']} DUIDs, "
+          f"{fp['days']} days", flush=True)

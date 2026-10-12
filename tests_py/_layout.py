@@ -19,7 +19,6 @@ PROJECT_OF = {
     "duckrun": "dbt1",
     "iceberg": "dbt1",
     "ducklake": "dbt1",
-    "dwh": "dbt1",
     "spark": "dbt1",
     "polars": "dbt1",
 }

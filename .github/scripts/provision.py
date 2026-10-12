@@ -6,7 +6,7 @@
 Idempotent: every item is create-if-missing, keep-if-present. Diagnostics go to stderr so
 stdout is nothing but KEY=value lines.
 
-FOUR ITEMS, ALL INSIDE ONE WORKSPACE FOLDER. The engines used to get one data item each,
+THREE ITEMS, ALL INSIDE ONE WORKSPACE FOLDER. The engines used to get one data item each,
 which put up to fourteen items at the root of a workspace that already has ~175 — and every
 lakehouse drags an auto-created SQLEndpoint shadow item along with it. They share one
 lakehouse now and are separated by SCHEMA instead (see macros/generate_schema_name.sql):
@@ -15,30 +15,27 @@ lakehouse now and are separated by SCHEMA instead (see macros/generate_schema_na
       dbt_landing        Lakehouse  the CSVs download_aemo.py lands. Written ONCE, read by all five.
       dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* polars_* schemas
                                     (Tables/), and the repo copy deploy.py puts in Files/dbt
-      dbt_dwh            Warehouse  dwh_landing, dwh_mart
       dbt_ducklake_meta  SQL DB     DuckLake catalog metadata only, no data
 
-The Warehouse and the SQL DB cannot collapse into the lakehouse: a Warehouse cannot hold
-Delta tables another engine wrote, and DuckLake's catalog must be a SQL database. Those two
-are an engine-forced floor, not a layout choice.
+The SQL DB cannot collapse into the lakehouse: DuckLake's catalog must be a SQL database.
+That is an engine-forced floor, not a layout choice.
 
 THE LANDING PATH AND THE READ PATH ARE DIFFERENT VARIABLES, deliberately:
 
     LANDING_PATH  where download_aemo.py writes. IDENTICAL on all five legs, always
                   dbt_landing/Files. This is the whole basis of parity.py — if the engines
                   read different bytes, comparing their output means nothing.
-    FILES_PATH    how THIS engine's dbt reads that zone. Same as LANDING_PATH for four of
-                  them; the dwh leg reads through a shortcut because a Warehouse has no
-                  Files section of its own.
+    FILES_PATH    how THIS engine's dbt reads that zone. Same as LANDING_PATH today; a
+                  separate key so an engine that must read it another way gets its own.
 
-They used to be one variable, and provision.py re-emitted it for ducklake and dwh — so
-those two legs' downloaders landed their own private copies of the AEMO CSVs and the parity
+They used to be one variable, and provision.py re-emitted it for two engines — so those
+two legs' downloaders landed their own private copies of the AEMO CSVs and the parity
 comparison was quietly comparing different inputs.
 
 EVERY ITEM THIS TOUCHES IS WRITTEN DOWN UNDER ITS GUID into the run-record fragment named by
-`RUN_RECORD` (see record.py) -- plus, for dwh and spark, WHICH item the leg's compute bills
-against (`legs.<engine>.compute`): the Warehouse for dwh, the shared lakehouse for spark's
-Livy session. That is what measure_cu.py joins the Capacity Metrics model on. `RUN_RECORD`
+`RUN_RECORD` (see record.py) -- plus, for ducklake, the catalog SQL DB its compute bills
+against (`legs.<engine>.compute`). That is what measure_cu.py joins the Capacity Metrics
+model on. `RUN_RECORD`
 unset is a no-op, so running this by hand (or from the demo notebook) still works.
 """
 from __future__ import annotations
@@ -60,11 +57,10 @@ FOLDER = os.environ.get("FOLDER", "dbt")
 LANDING_LAKEHOUSE = "dbt_landing"
 # The one lakehouse every Delta/Iceberg-writing engine shares. Schemas keep them apart.
 DATA_LAKEHOUSE = "dbt"
-DWH_WAREHOUSE = "dbt_dwh"
 DUCKLAKE_SQL_DB = "dbt_ducklake_meta"
 
 LAKEHOUSE_ENGINES = {"duckrun", "iceberg", "ducklake", "spark", "polars"}
-ENGINES = LAKEHOUSE_ENGINES | {"dwh"}
+ENGINES = LAKEHOUSE_ENGINES
 
 
 def log(msg: str) -> None:
@@ -167,46 +163,6 @@ def abfss(item_id: str, section: str) -> str:
     return f"abfss://{WS}@onelake.dfs.fabric.microsoft.com/{item_id}/{section}"
 
 
-def ensure_landing_shortcut(host_lakehouse_id: str, landing_id: str) -> None:
-    """Shortcut Files/landing in the shared lakehouse -> the landing lakehouse.
-
-    This exists for the dwh leg: a Fabric WAREHOUSE has no Files section and cannot host a
-    shortcut, so its OPENROWSET reads the landing zone through one hosted elsewhere. It used
-    to live in a lakehouse created for nothing else (`dbt_dwh_src`); the shared data
-    lakehouse hosts it now, which is one item fewer for the same mechanism.
-
-    OneLake accounts a transaction against the REQUESTED path, so reading through a
-    shortcut books the cost to the item hosting the shortcut.
-    """
-    r = req("GET", f"workspaces/{WS}/items/{host_lakehouse_id}/shortcuts")
-    if r.status_code == 200:
-        for s in r.json().get("value", []):
-            if s.get("name") == "landing":
-                return
-    req("POST", f"workspaces/{WS}/items/{host_lakehouse_id}/shortcuts", json={
-        "path": "Files",
-        "name": "landing",
-        "target": {"oneLake": {"workspaceId": WS, "itemId": landing_id, "path": "Files"}},
-    })
-
-
-def warehouse_connection(wh_id: str) -> str:
-    """The SQL analytics endpoint lands last; poll for it."""
-    for _ in range(60):
-        r = req("GET", f"workspaces/{WS}/warehouses/{wh_id}")
-        if r.status_code == 200:
-            cs = r.json().get("properties", {}).get("connectionString")
-            if cs:
-                return cs
-        time.sleep(5)
-    raise SystemExit("warehouse connection string never appeared")
-
-
-def workspace_name() -> str:
-    r = req("GET", f"workspaces/{WS}")
-    return r.json().get("displayName", "") if r.status_code == 200 else ""
-
-
 def main() -> int:
     if len(sys.argv) != 2 or sys.argv[1] not in ENGINES:
         print(f"usage: provision.py [{' | '.join(sorted(ENGINES))}]", file=sys.stderr)
@@ -225,8 +181,7 @@ def main() -> int:
     # Every engine's download_aemo.py writes HERE, and only here.
     emit("LANDING_PATH", landing_path)
 
-    # The shared data lakehouse is provisioned on every leg, not just the four that write
-    # to it: the dwh leg needs it to host the landing shortcut.
+    # The shared data lakehouse every engine writes its schemas into.
     data_id = ensure("lakehouses", DATA_LAKEHOUSE,
                      {"creationPayload": {"enableSchemas": True}}, folder_id)
     record.item(data_id, "data", "Lakehouse", DATA_LAKEHOUSE)
@@ -315,7 +270,7 @@ def main() -> int:
             move_to_folder(db_id, folder_id)
         record.item(db_id, "catalog", "SQLDatabase", DUCKLAKE_SQL_DB, engine="ducklake")
         # The catalog is COMPUTE, and it is ducklake's alone: a Fabric SQL DB bills `Sql Usage`
-        # against its own item (19.5k CU over three days beside spark's 73k of Livy, measured
+        # against its own item (19.5k CU over three days, measured
         # 2026-09-17), and nothing but the ducklake leg ever queries it. In Fabric mode the
         # notebook joins the same list; record.leg accumulates rather than replaces.
         record.leg("ducklake", compute=[db_id])
@@ -342,34 +297,11 @@ def main() -> int:
                 log("  ! no `az` to mint the SQL DB token; export DBT_ENV_SECRET_SQL_TOKEN "
                     "yourself for a local ducklake run")
 
-    elif engine == "dwh":
-        wh_id = ensure("warehouses", DWH_WAREHOUSE, None, folder_id)
-        emit("FABRIC_DWH_SERVER", warehouse_connection(wh_id))
-        emit("FABRIC_DWH_NAME", DWH_WAREHOUSE)
-        # The item, not just the name: layout.py reads the warehouse's Tables by GUID.
-        emit("FABRIC_DWH_ID", wh_id)
-        emit("FABRIC_AUTH", "CLI")
-        # A Warehouse bills its own compute (`Warehouse Query`) against its own item, and the
-        # item outlives every run -- so the leg's window, not the GUID alone, is what
-        # attributes it. See history/README.md.
-        record.item(wh_id, "warehouse", "Warehouse", DWH_WAREHOUSE, engine="dwh")
-        record.leg("dwh", compute=[wh_id])
-        # A Warehouse has no Files section, so it reads the landing zone through a shortcut
-        # hosted in the shared data lakehouse. Note this is the READ path only — the
-        # downloader still writes to LANDING_PATH above.
-        ensure_landing_shortcut(data_id, landing_id)
-        emit("FILES_PATH", f"{abfss(data_id, 'Files')}/landing")
-
     elif engine == "spark":
-        emit("FABRIC_LAKEHOUSE_ID", data_id)
-        emit("FABRIC_LAKEHOUSE_NAME", DATA_LAKEHOUSE)
-        # Resolved from the GUID, never hardcoded: dbt-fabricspark needs the workspace NAME
-        # to build relations against a schema-enabled lakehouse.
-        emit("FABRIC_WORKSPACE_NAME", workspace_name())
-        # A Livy session bills `High Concurrency Session Livy Run` against the lakehouse it
-        # was opened on -- the SHARED one. Only the spark leg opens Livy sessions there, so the
-        # (item, operation) pair is still unambiguous; the window does the rest.
-        record.leg("spark", compute=[data_id])
+        # Local PySpark (dbt-spark, method: session) on the runner: run_dbt.py creates the
+        # spark_landing / spark_mart databases with their LOCATION here and registers the
+        # Delta tables already in them, so a fresh runner's empty metastore still sees them.
+        emit("SPARK_TABLES_PATH", abfss(data_id, "Tables"))
 
     log(f"provisioned {engine}")
     return 0

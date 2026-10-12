@@ -42,13 +42,8 @@ jobs:
 
   # ONE JOB PER ENGINE, each installing only that engine's requirements.
   #
-  # Not one job installing all five, for two independent reasons:
+  # Not one job installing all five:
   #
-  #   * dbt-fabric and dbt-fabricspark shadow each other under the dbt.adapters namespace,
-  #     so loading the spark plugin fails with "has no attribute 'Plugin'"; the
-  #     dbt-fabric-samdebruyn fork this replaced instead made the spark profile fail
-  #     validation with "'database' is a required property". Both were found here rather
-  #     than locally.
   #   * it keeps each engine honest about its own pins. iceberg and ducklake are both
   #     dbt-duckdb but on different duckdb lines -- iceberg floats on `--pre`, ducklake is
   #     pinned to 1.5.5 for its community extensions -- and one job would silently give
@@ -69,8 +64,7 @@ jobs:
           - {engine: duckrun,  label: "🦆 duckdb · delta-rs"}
           - {engine: iceberg,  label: "🧊 duckdb · iceberg"}
           - {engine: ducklake, label: "🌊 duckdb · ducklake"}
-          - {engine: dwh,      label: "🏢 fabric · warehouse"}
-          - {engine: spark,    label: "⚡ fabric · spark"}
+          - {engine: spark,    label: "⚡ pyspark · delta"}
           - {engine: polars,   label: "🐻‍❄️ polars · iceberg"}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,7 +72,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          # 3.12: dbt-fabric requires it.
+          # 3.12, like every other job.
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/${{ matrix.engine }}.txt

@@ -3,8 +3,8 @@ version: '1.0.0'
 profile: 'aemo_electricity'
 
 model-paths: ["models"]
-# TWO macro paths. `macros/` here is what is specific to this project — the T-SQL OPENROWSET
-# reader, the Spark staging dance, the dwh schema pre-create, the iceberg adapter overrides.
+# TWO macro paths. `macros/` here is what is specific to this project — the Spark staging
+# dance, the iceberg adapter overrides.
 # `../macros`, at the REPO ROOT, is the shared set: the AEMO column layout
 # (aemo_columns.sql) and the DuckDB-family reader live there so they exist in exactly ONE
 # place, and tests_py/test_aemo_columns.py pins that. A macro that is genuinely engine- or
@@ -16,7 +16,7 @@ clean-targets: ["target", "dbt_packages"]
 # =====================================================================================
 # HOW ONE RUN SELECTS ONE ENGINE
 #
-# ONE PROJECT, dbt-core 1.x, SIX ENGINES: duckrun, iceberg, ducklake, dwh, spark, polars.
+# ONE PROJECT, dbt-core 1.x, FIVE ENGINES: duckrun, iceberg, ducklake, spark, polars.
 #
 # It was briefly two projects: iceberg spent 2026-09-17 to 2026-09-18 in a ../dbt2 on dbt
 # OSS 2, whose catalogs.yml cannot sit in a dbt 1.x project root. That engine could not
@@ -27,7 +27,7 @@ clean-targets: ["target", "dbt_packages"]
 # engine folders. That collision is legal only because exactly one engine tree is +enabled
 # per run; dbt's duplicate-resource-name check only ever sees enabled nodes.
 #
-# `dbt build --target dwh` sets target.name == 'dwh', so only models/aemo/dwh/** is
+# `dbt build --target spark` sets target.name == 'spark', so only models/aemo/spark/** is
 # enabled and the other four trees parse into manifest['disabled']. There is no --select
 # anywhere in CI; selection is ENTIRELY +enabled.
 #
@@ -84,7 +84,7 @@ on-run-start:
   # Row groups. DuckLake's default parquet_row_group_size is 122,880 rows, and that default
   # is the ENTIRE reason this leg reported 844 row groups on fct_summary where delta-rs
   # reported 27 and spark 13 -- nothing about DuckDB or the Delta export forces it. 2M puts
-  # the leg in the same order as the other four (iceberg 1.3M, dwh 1.7M, delta-rs 3.8M,
+  # the leg in the same order as the other four (iceberg 1.3M, delta-rs 3.8M,
   # spark 8.1M), which is what Direct Lake wants to transcode. Verified offline on duckdb
   # 1.5.5: the option is stored in the catalog, survives a reconnect, and produced exactly
   # 2,000,000 rows per group on an fct_summary-shaped table -- no byte cap gets in the way,
@@ -95,9 +95,6 @@ on-run-start:
   # (DROP, the same reset the marts document).
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('parquet_row_group_size', 2000000){% endif %}"
   - "{% if target.name == 'ducklake' and flags.WHICH in ['run', 'build', 'retry'] %}CALL ducklake.set_option('expire_older_than', '2 day'){% endif %}"
-  # Fabric Warehouse does not auto-create schemas, and CREATE SCHEMA must be alone in its
-  # batch — hence the EXEC() inside the macro.
-  - "{% if target.name == 'dwh' %}{{ create_schemas_if_not_exists(['landing', 'mart']) }}{% endif %}"
 
 on-run-end:
   # DuckLake writes many small parquet files and needs an explicit Delta export before a
@@ -138,12 +135,10 @@ models:
         +enabled: "{{ target.name == 'ducklake' }}"
         dimensions: {+schema: mart}
         marts:      {+schema: landing}
-      dwh:
-        +enabled: "{{ target.name == 'dwh' }}"
-        dimensions: {+schema: mart}
-        marts:      {+schema: landing}
       spark:
         +enabled: "{{ target.name == 'spark' }}"
+        # dbt-spark writes parquet unless told; every engine's gold layer is Delta in OneLake.
+        +file_format: delta
         dimensions: {+schema: mart}
         marts:      {+schema: landing}
       polars:
@@ -172,6 +167,5 @@ data_tests:
       duckrun:  {+enabled: "{{ target.name == 'duckrun' }}"}
       iceberg:  {+enabled: "{{ target.name == 'iceberg' }}"}
       ducklake: {+enabled: "{{ target.name == 'ducklake' }}"}
-      dwh:      {+enabled: "{{ target.name == 'dwh' }}"}
       spark:    {+enabled: "{{ target.name == 'spark' }}"}
       polars:   {+enabled: "{{ target.name == 'polars' }}"}

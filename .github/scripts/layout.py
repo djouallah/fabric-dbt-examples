@@ -7,20 +7,20 @@ $GITHUB_STEP_SUMMARY gets ONE table -- `headline_table`, one row per engine. Eve
 here is printed to the job log and recorded as numbers in `layout`, never on the run page; see
 write_outputs for why.
 
-    BUILD_ENGINES=duckrun,dwh python .github/scripts/layout.py
+    BUILD_ENGINES=duckrun,spark python .github/scripts/layout.py
 
 ONE READER COVERS ALL FIVE. OneLake surfaces every table with a Delta log: duckrun writes Delta,
 spark writes Delta, ducklake's `delta_export()` writes each table's `_delta_log` in place,
-the Warehouse publishes one per table, and the Iceberg REST catalog's tables are virtualised as
+and the Iceberg REST catalog's tables (iceberg, polars) are virtualised as
 Delta by OneLake. So the question "how many files, row groups, bytes, which encodings, is it
 sorted" is asked the same way of every engine -- which is what makes the numbers comparable.
 Every engine is best-effort: a table that cannot be read is ABSENT from the document ("not
 measured"), never `{}`, and the job stays green; the first run tells whether iceberg's
 virtualised log is listed.
 
-TWO ITEMS, NOT FIVE. All the lakehouse engines share the `dbt` lakehouse and are separated by
-schema (`<engine>_landing` / `<engine>_mart`, or `<DBT_SCHEMA>_<engine>_*`), so one
-reader over its Tables serves every lakehouse engine; the Warehouse is the second connection.
+ONE ITEM, NOT FIVE. Every engine shares the `dbt` lakehouse and is separated by schema
+(`<engine>_landing` / `<engine>_mart`, or `<DBT_SCHEMA>_<engine>_*`), so one reader over its
+Tables serves them all.
 The schema rule comes from deploy.mart_schema() so there is no third copy of it.
 
 GLOB, NEVER A BARE `get_stats()`. A bare call sweeps every schema in the item -- each
@@ -57,9 +57,9 @@ for p in (str(REPO), str(SCRIPTS)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-ALL_ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark", "polars")
-# The item each engine's tables live in: everything but dwh is in the shared lakehouse.
-LAKEHOUSE_ENGINES = ("duckrun", "iceberg", "ducklake", "spark", "polars")
+ALL_ENGINES = ("duckrun", "iceberg", "ducklake", "spark", "polars")
+# The item each engine's tables live in: all of them, the shared lakehouse.
+LAKEHOUSE_ENGINES = ALL_ENGINES
 
 # The canonical eight, in pipeline order -- inputs first, mart last -- so a disagreement in the
 # mart can be traced to its inputs on the rows above it.
@@ -72,15 +72,14 @@ MART = "fct_summary"
 # What actually wrote the parquet behind each engine's Delta log -- the interesting axis when
 # two engines produce the same rows in a very different physical layout.
 WRITER = {"duckrun": "delta-rs", "iceberg": "duckdb (iceberg)", "ducklake": "duckdb (ducklake)",
-          "spark": "spark", "dwh": "warehouse",
-          "polars": "polars (pyiceberg)"}
+          "spark": "spark (delta-spark)", "polars": "polars (pyiceberg)"}
 
 # Display only, and the SAME five labels as pipeline.yml's `plan` step and ci.yml's gating
 # matrix: the headline table and the Actions graph should name a leg identically, because they
 # are read side by side. `engine` remains the key everywhere else.
 LABEL = {"duckrun": "🦆 duckdb · delta-rs", "iceberg": "🧊 duckdb · iceberg",
-         "ducklake": "🌊 duckdb · ducklake", "dwh": "🏢 fabric · warehouse",
-         "spark": "⚡ fabric · spark", "polars": "🐻‍❄️ polars · iceberg"}
+         "ducklake": "🌊 duckdb · ducklake", "spark": "⚡ pyspark · delta",
+         "polars": "🐻‍❄️ polars · iceberg"}
 
 # The headline heading counts the engines in words -- "Five engines, one gold layer" reads as a
 # claim, "5 engine(s)" reads as a log line. A single-engine run still has to say something true.
@@ -298,7 +297,7 @@ def run_lengths(con, at, rows) -> dict:
         cols = _columns(at, rows)
         if not files or not cols:
             return {}
-        # A column-mapped table (dwh, spark) names its columns `col-<guid>` in the FILE; the scan
+        # A column-mapped table (a Fabric-written one) names its columns `col-<guid>` in the FILE; the scan
         # below reads the file, so it selects the physical name and reports the logical one.
         phys = ({r[at["path_in_schema"]]: r[at["physical_path_in_schema"]] for r in rows}
                 if "physical_path_in_schema" in at else {})
@@ -354,8 +353,7 @@ def _vorder_from_log(actions, live_files) -> dict:
 def vorder_tags(con, guid: str, schema: str, table: str, live_files) -> dict:
     """`_vorder_from_log` over the table's `_delta_log/*.json`, read with obstore (onelake.py). Commit files are zero-padded, so a lexicographic sort IS
     commit order. ONLY MEANINGFUL FOR A SPARK-WRITTEN TABLE: the tag is the Fabric Spark
-    writer's marker; the Warehouse V-Orders by default and stamps none, delta-rs and DuckDB
-    never do. Best-effort: `{}` on anything at all."""
+    writer's marker; local delta-spark, delta-rs and DuckDB never stamp it. Best-effort: `{}` on anything at all."""
     try:
         import obstore
 
@@ -436,9 +434,8 @@ def headline_table(per_engine: dict, engines: list[str], encodings: dict,
     ⚠️ marks an engine whose row count differs from the others.
 
     NO V-ORDER COLUMN. It cannot be stated in one cell without lying: only the Fabric Spark
-    writer stamps `add.tags.VORDER`, the Warehouse V-Orders by DEFAULT and stamps nothing, and
-    the DuckDB writers neither stamp nor V-Order -- so the same blank cell would mean three
-    different things. `ordering_table` still reports the per-file tags where they exist."""
+    writer stamps `add.tags.VORDER`, and no engine here is that writer any more -- so the same
+    blank cell would mean different things. `ordering_table` still reports the per-file tags where they exist."""
     out.append(f"## 🏁 {NUMBER.get(len(engines), str(len(engines)))} "
                f"{'engine' if len(engines) == 1 else 'engines'}, one gold layer\n")
     out.append(f"<sub>Every column is <code>{MART}</code>, the table Power BI reads through "
@@ -564,15 +561,13 @@ def ordering_table(ordering: dict, engines: list[str], out: list[str]) -> None:
                "brought together. A near-unique column (`mw`, `price`) is the control. "
                "<code>*</code> = a truncated string statistic. <b>V-Order files</b> is the "
                "per-file Delta <code>add.tags.VORDER</code>, which only the Fabric Spark writer "
-               "stamps; the Warehouse V-Orders by default and writes no tag, so it reads "
-               "<code>n/a</code>.</sub>\n")
+               "stamps; local delta-spark does not.</sub>\n")
     out.append("| engine | V-Order files | sample |")
     out.append("| --- | --- | --- |")
     for e in have:
         d = ordering[e]
         v, s = d.get("vorder_files") or {}, d.get("sample") or {}
-        vc = ("n/a (warehouse)" if not v and e == "dwh"
-              else "—" if not v else (f"{v['tagged']:,}/{v['files']:,}"
+        vc = ("—" if not v else (f"{v['tagged']:,}/{v['files']:,}"
                                       + (f" +{v['unknown']:,}?" if v.get("unknown") else "")))
         sc = "—" if not s else f"`{s['file']}` · {s['rows']:,} rows"
         out.append(f"| {e} | {vc} | {sc} |")
@@ -603,8 +598,7 @@ def build_doc(per_engine: dict, engines: list[str], items: dict, prefixes: dict,
         "run": {"id": os.environ.get("GITHUB_RUN_ID"),
                 "sha": os.environ.get("GITHUB_SHA"),
                 "written": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-        "config": {**({"spark": {"resource_profile": os.environ.get("SPARK_RESOURCE_PROFILE") or None}}
-                      if "spark" in engines else {})},
+        "config": {},
         "engines": {e: {"item": items[e][1], "kind": items[e][0], "guid": items[e][2],
                         "schema_prefix": prefixes.get(e), "writer": WRITER.get(e, e)}
                     for e in engines if e in items},
@@ -634,12 +628,6 @@ def fabric_items(engines: list[str]) -> dict:
                 out[e] = ("Lakehouse", provision.DATA_LAKEHOUSE, guid)
         else:
             log(f"  lakehouse {provision.DATA_LAKEHOUSE} not found -- {lake} not measured")
-    if "dwh" in engines:
-        guid = provision.find("warehouses", provision.DWH_WAREHOUSE)
-        if guid:
-            out["dwh"] = ("Warehouse", provision.DWH_WAREHOUSE, guid)
-        else:
-            log(f"  warehouse {provision.DWH_WAREHOUSE} not found -- dwh not measured")
     return out
 
 
@@ -693,8 +681,8 @@ def main() -> int:
     prefixes = {e: schema_prefix(e) for e in engines}
     log(f"layout: engines {engines}; schemas {prefixes}")
 
-    # One worker per ITEM (the lakehouse, the warehouse): they are independent, and the
-    # lakehouse alone can take many minutes over OneLake, so wall-clock = slowest item.
+    # One worker per ITEM -- one item today, the shared lakehouse; it can take many minutes
+    # over OneLake.
     by_item: dict = {}
     for e, (kind, name, guid) in items.items():
         by_item.setdefault((guid, name), []).append(e)

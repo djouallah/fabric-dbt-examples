@@ -9,17 +9,15 @@
             | python .github/scripts/parity.py capture history/parity
     then compare with `parity.py compare history/parity`.
 
-    Aggregates rather than a row-by-row diff on purpose: the engines write to five
-    different stores (Delta on OneLake, an Iceberg REST catalog, DuckLake parquet, a Fabric
-    Warehouse, a Fabric Lakehouse) and no single reader can open all five. Each engine
-    reports through its OWN adapter, and only the numbers are compared.
+    Aggregates rather than a row-by-row diff on purpose: the engines write through four
+    different stacks (delta-rs, an Iceberg REST catalog, DuckLake parquet, delta-spark) and
+    each reports through its OWN adapter. Only the
+    numbers are compared.
 
-    Two known reasons the numbers can differ WITHOUT the logic differing, both measured
-    elsewhere and both handled in parity.py rather than here:
-      * T-SQL pads strings on comparison ('ERB01' = 'ERB01 ' is TRUE); DuckDB and Spark do
-        not. A single trailing space in a join key split the engines for over a year.
-      * DOUBLE -> DECIMAL tie-breaking is HALF_UP on Spark, HALF_EVEN on DuckDB and a third
-        thing in T-SQL, so the money columns get a relative tolerance, not equality.
+    A known reason the numbers can differ WITHOUT the logic differing, handled in parity.py
+    rather than here:
+      * DOUBLE -> DECIMAL tie-breaking is HALF_UP on Spark and HALF_EVEN on DuckDB, so the
+        money columns get a relative tolerance, not equality.
 --#}
 
 {% macro parity_fingerprint(model='fct_summary') %}
@@ -29,13 +27,8 @@
   {#-- `dbl` is per-dialect for the same reason the date casts are: Spark SQL has no
        DOUBLE PRECISION and rejects it outright ("extra input 'PRECISION'"), which failed
        the spark leg AFTER a clean 60/62 build -- the fingerprint is the last step, so a
-       dialect slip here throws away the whole run's measurement. T-SQL has no DOUBLE. --#}
-  {%- if target.name == 'dwh' -%}
-    {%- set d, t, mw, price = '[date]', '[time]', 'mw', 'price' -%}
-    {%- set dbl = 'FLOAT' -%}
-    {%- set to_text = "CONVERT(VARCHAR(10), MIN([date]), 23)" -%}
-    {%- set to_text_max = "CONVERT(VARCHAR(10), MAX([date]), 23)" -%}
-  {%- elif target.name == 'spark' -%}
+       dialect slip here throws away the whole run's measurement. --#}
+  {%- if target.name == 'spark' -%}
     {%- set d, t, mw, price = '`date`', '`time`', 'mw', 'price' -%}
     {%- set dbl = 'DOUBLE' -%}
     {%- set to_text = "CAST(MIN(`date`) AS STRING)" -%}

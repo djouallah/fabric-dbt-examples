@@ -11,8 +11,6 @@ name: docs
 # **WHY duckrun OF THE FIVE.** The models are identical on all five engines, so any of them
 # draws the same DAG; what differs is the CATALOG, and that is the half worth publishing.
 # duckrun reads `num_rows`, `bytes` and `last_modified` straight out of the Delta log.
-# dbt-fabric (dwh) reports an approximate row count and nothing else -- no bytes, no
-# last-modified -- because its catalog query is `objectpropertyex(..., 'Cardinality')`.
 #
 # duckrun is also the only engine on which `docs generate` is FREE and SAFE:
 #
@@ -21,9 +19,7 @@ name: docs
 #   safe   every duckrun model guards its parse-time `run_query` on
 #          `flags.WHICH in ('run','build','retry')` and has an else-branch that assumes there
 #          IS work, so `docs generate` (WHICH == 'generate') compiles the full SQL and fires
-#          no query. dwh does NOT: dbt1/macros/new_source_files.sql guards only on
-#          `not execute`, so generating its docs would fire real OPENROWSET queries against
-#          the Warehouse -- the exact trap AGENTS.md warns about.
+#          no query.
 #
 # **THE PAGE IS ONE FILE.** `--static` inlines the manifest and the catalog into
 # `target/static_index.html`, which is what duckrun's own deploy-docs and
@@ -70,7 +66,7 @@ jobs:
   site:
     name: generate the docs
     # ONLY WHEN THE PIPELINE ACTUALLY BUILT duckrun. The page is duckrun's catalog (see the
-    # header); a run dispatched with engines: iceberg — or dwh, or spark — leaves every
+    # header); a run dispatched with engines: iceberg — or spark — leaves every
     # duckrun table byte-for-byte where it was, so republishing it is a pointless deploy that
     # queues behind the `pages` concurrency group and republishes an identical file.
     #
@@ -88,7 +84,7 @@ jobs:
     # to YAML and keeps its newlines inside the `${{ }}`.
     if: >-
       ${{ github.event_name != 'workflow_run'
-      || contains(github.event.workflow_run.display_title, 'all six engines')
+      || contains(github.event.workflow_run.display_title, 'all five engines')
       || contains(github.event.workflow_run.display_title, 'duckrun') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30

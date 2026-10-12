@@ -6,14 +6,12 @@ NOTHING and exits 0. If a target name stops matching a folder name, every +enabl
 false, `dbt build` reports "Nothing to do", and the job goes green having done nothing.
 Nothing else in the repo catches that.
 
-ONE PROJECT, dbt1/, FIVE ENGINES: duckrun, iceberg, ducklake, dwh, spark. It was briefly two
+ONE PROJECT, dbt1/, FIVE ENGINES: duckrun, iceberg, ducklake, spark, polars. It was briefly two
 -- iceberg spent a day in a dbt2/ on dbt OSS 2, whose catalogs.yml cannot sit in a dbt 1.x
 project root -- and ENGINES below is what is left of that: the engine -> project mapping,
 kept because tests_py/_layout.py's PROJECT_OF holds the same dict and the two must agree.
-run_dbt.py holds a THIRD copy, but of the in-process SUBSET only (duckrun, iceberg, ducklake,
-polars): dwh and spark never go through it, and tests_py/test_modes.py asserts that subset and
-pipeline.yml's dwh/spark build step partition the engines between them -- an engine in neither
-reaches no build step at all, which is silent and green.
+run_dbt.py holds a THIRD copy -- every engine builds through it -- and tests_py/test_modes.py
+asserts it covers them all: an engine missing there reaches no build at all, silent and green.
 
 Runs `dbt parse` once per engine with dummy env vars and asserts, for each:
   * the ENABLED model set is exactly the canonical eight
@@ -27,10 +25,8 @@ Runs `dbt parse` once per engine with dummy env vars and asserts, for each:
     one that regressed elsewhere: a gate on the project key silently disabled them,
     because a generic test takes the fqn of the YML FILE, not of the model it patches
 
-ONE ENGINE PER INVOCATION, and CI runs it as a five-way matrix. The adapters still cannot
-share an environment: dbt-fabric and dbt-fabricspark shadow each other under the
-dbt.adapters namespace ("has no attribute 'Plugin'"). Running per engine is also more
-faithful: each one is validated against exactly the dependencies it will build with.
+ONE ENGINE PER INVOCATION, and CI runs it as a five-way matrix: each engine is validated
+against exactly the dependencies it will build with.
 
 Usage:  python .github/scripts/check_gating.py <engine>
         python .github/scripts/check_gating.py            # every engine this shell can reach
@@ -58,7 +54,6 @@ ENGINES = {
     "duckrun": "dbt1",
     "iceberg": "dbt1",
     "ducklake": "dbt1",
-    "dwh": "dbt1",
     "spark": "dbt1",
     "polars": "dbt1",
 }
@@ -87,8 +82,6 @@ DUMMY_ENV = {
     "ONELAKE_ENDPOINT": "https://onelake.table.fabric.microsoft.com/iceberg",
     "ONELAKE_TOKEN": "dummy",
     "DUCKLAKE_CATALOG_DSN": "Server=localhost;Database=dummy",
-    "FABRIC_DWH_SERVER": "dummy.datawarehouse.fabric.microsoft.com",
-    "FABRIC_DWH_NAME": "dummy",
     "FABRIC_WORKSPACE_ID": "00000000-0000-0000-0000-000000000000",
     "FABRIC_LAKEHOUSE_ID": "11111111-1111-1111-1111-111111111111",
     "FABRIC_LAKEHOUSE_NAME": "dummy",
@@ -99,8 +92,8 @@ DUMMY_ENV = {
 
 
 def dbt_bin() -> str:
-    """The dbt executable. DBT_BIN is an escape hatch for a laptop that keeps dbt-fabric and
-    dbt-fabricspark in separate venvs, since those two still cannot share one."""
+    """The dbt executable. DBT_BIN points at another venv's dbt, for a laptop that keeps
+    engines in separate environments."""
     return os.environ.get("DBT_BIN", "dbt")
 
 
@@ -190,7 +183,7 @@ def dbt_installed(target: str) -> bool:
     # dbt1/macros/iceberg_adapter_overrides.sql has to branch on target.name.
     mod = {"duckrun": "dbt.adapters.duckrun", "iceberg": "dbt.adapters.duckdb",
            "ducklake": "dbt.adapters.duckdb",
-           "dwh": "dbt.adapters.fabric", "spark": "dbt.adapters.fabricspark",
+           "spark": "dbt.adapters.spark",
            "polars": "dbt.adapters.polars"}[target]
     try:
         return importlib.util.find_spec(mod) is not None

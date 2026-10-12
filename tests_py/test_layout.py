@@ -108,10 +108,10 @@ def test_vorder_tags_last_add_wins_and_matches_on_basename():
 
 def test_parity_table_flags_disagreement_and_absence():
     per = {"duckrun": {"fct_summary": {"total_rows": 10, "size_mb": 1.0}},
-           "dwh": {"fct_summary": {"total_rows": 11, "size_mb": 2.0}},
+           "polars": {"fct_summary": {"total_rows": 11, "size_mb": 2.0}},
            "spark": {}}
     out: list[str] = []
-    layout.parity_table(per, ["duckrun", "dwh", "spark"], out)
+    layout.parity_table(per, ["duckrun", "polars", "spark"], out)
     line = next(l for l in out if l.startswith("| `fct_summary`"))
     assert "⚠️" in line and "| 10 | 11 | — |" in line
     assert any(l.startswith("| **total rows** ⚠️") for l in out)
@@ -125,17 +125,17 @@ def test_headline_table_flags_the_row_count_outlier():
     per = {"duckrun": {"fct_summary": {"total_rows": 10, "size_mb": 1.0, "num_files": 2,
                                        "compression": "ZSTD", "vorder": False},
                        "fct_scada": {"total_rows": 30, "size_mb": 3.0}},
-           "dwh": {"fct_summary": {"total_rows": 10, "size_mb": 2.0},
+           "polars": {"fct_summary": {"total_rows": 10, "size_mb": 2.0},
                    "fct_scada": {"total_rows": 30, "size_mb": 4.0}},
            "spark": {"fct_summary": {"total_rows": 9, "size_mb": 1.0}},
            "iceberg": {}}
     out: list[str] = []
-    layout.headline_table(per, ["duckrun", "dwh", "spark", "iceberg"], {}, out)  # no encodings
+    layout.headline_table(per, ["duckrun", "polars", "spark", "iceberg"], {}, out)  # no encodings
 
     rows = {e: next(l for l in out if l.startswith(f"| {layout.LABEL[e]} |"))
-            for e in ("duckrun", "dwh", "spark", "iceberg")}
+            for e in ("duckrun", "polars", "spark", "iceberg")}
     assert "⚠️" in rows["spark"], "the engine 9 rows short is not flagged"
-    assert "⚠️" not in rows["duckrun"] and "⚠️" not in rows["dwh"], "the agreeing majority is flagged"
+    assert "⚠️" not in rows["duckrun"] and "⚠️" not in rows["polars"], "the agreeing majority is flagged"
     # 10 = fct_summary's own rows. NOTHING here is summed over the other tables: a total
     # that mixes them is not the parity claim, and stg_csv_archive_log being a view on some
     # engines made the sum differ where the data did not.
@@ -158,19 +158,19 @@ def test_headline_encoding_counts_only_fully_dictionary_encoded_columns():
 
 
 def test_headline_carries_no_vorder_column():
-    """V-Order cannot be one cell without lying: only the Fabric Spark writer stamps a tag, the
-    Warehouse V-Orders by default and stamps nothing, and the DuckDB writers do neither -- one
-    blank cell would mean three different things. It lives in ordering_table, per file."""
+    """V-Order cannot be one cell without lying: only the Fabric Spark writer stamps a tag, and
+    no engine here is that writer, so a blank cell would mean different things. It lives in
+    ordering_table, per file."""
     out: list[str] = []
-    layout.headline_table({"dwh": {"fct_summary": {"total_rows": 1}}}, ["dwh"], {}, out)
+    layout.headline_table({"polars": {"fct_summary": {"total_rows": 1}}}, ["polars"], {}, out)
     assert not any("V-Order" in l or "vorder" in l.lower() for l in out)
 
 
 def test_build_doc_omits_unmeasured_sections():
-    doc = layout.build_doc({"duckrun": {"fct_summary": {"total_rows": 1}}}, ["duckrun", "dwh"],
+    doc = layout.build_doc({"duckrun": {"fct_summary": {"total_rows": 1}}}, ["duckrun", "polars"],
                            {"duckrun": ("Lakehouse", "dbt", "G1")}, {"duckrun": "duckrun"},
                            {}, {})
     assert list(doc["stats"]) == ["duckrun"]
     assert "encodings" not in doc and "ordering" not in doc
-    assert doc["engines"]["duckrun"]["guid"] == "G1" and "dwh" not in doc["engines"]
+    assert doc["engines"]["duckrun"]["guid"] == "G1" and "polars" not in doc["engines"]
     assert "spark" not in doc["config"]

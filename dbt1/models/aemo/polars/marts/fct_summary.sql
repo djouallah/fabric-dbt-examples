@@ -108,7 +108,7 @@ daily_summary AS (
     AND p.INTERVENTION = 0
     -- Only units the daily branch will be able to reproduce once this date settles.
     AND s.DUID IN (SELECT dd.DUID FROM dispatch_duids dd)
-    AND s.SETTLEMENTDATE > (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }})
+    AND s.SETTLEMENTDATE > (SELECT MAX(CAST(sc.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }} sc)
   GROUP BY ALL
 ),
 
@@ -121,8 +121,8 @@ SELECT
   CAST(price AS DECIMAL(18, 4)) AS price,
   -- Provenance column only (see the iceberg copy).
   (SELECT GREATEST(
-    (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }}),
-    COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMP))
+    (SELECT MAX(CAST(sc.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }} sc),
+    COALESCE((SELECT MAX(CAST(st.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada_today') }} st), CAST('1900-01-01' AS TIMESTAMP))
   )) AS cutoff
 FROM daily_summary
 )

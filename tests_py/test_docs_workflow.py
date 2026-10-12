@@ -155,7 +155,7 @@ def test_the_gate_matches_what_pipeline_run_name_actually_says():
         f"not match -- the page would never be published again"
     )
     assert publishes(ENGINE), f"an engines: {ENGINE} run does not publish the page"
-    for other in ("iceberg", "ducklake", "dwh", "spark", "polars"):
+    for other in ("iceberg", "ducklake", "spark", "polars"):
         assert not publishes(other), (
             f"engines: {other} builds none of duckrun's tables, but the gate matches the "
             f"title it renders -- the page would be republished unchanged"

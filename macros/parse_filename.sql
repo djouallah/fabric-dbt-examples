@@ -4,20 +4,14 @@
      pattern used everywhere else, because the call site must stay identical across the five
      model trees — each dialect passes its own way of naming the source file, and the models
      are otherwise the same text:
-       DuckDB  parse_filename('filename')          -- read_csv's filename column
-       Fabric  parse_filename('src.filepath()')    -- OPENROWSET alias
-       Spark   parse_filename('_metadata.file_name')
-
-     The T-SQL branch casts to VARCHAR because Fabric Warehouse cannot store NVARCHAR, which
-     is what the string functions return. --#}
+       DuckDB / Polars  parse_filename('filename')   -- the reader's file-path column
+       Spark            parse_filename('_fname')     -- input_file_name(), kept by the stage
+     Keyed on target.type (`spark` for dbt-spark): this is about DIALECT, not engine. --#}
 {% macro parse_filename(filepath) %}
-  {%- if target.type == 'fabric' -%}
-    {%- set fn -%}RIGHT({{ filepath }}, CHARINDEX('/', REVERSE({{ filepath }}) + '/') - 1){%- endset -%}
-    CAST(LEFT({{ fn }}, CHARINDEX('.', {{ fn }} + '.') - 1) AS VARCHAR(256))
-  {%- elif target.type == 'fabricspark' -%}
+  {%- if target.type == 'spark' -%}
     substring_index(element_at(split({{ filepath }}, '/'), -1), '.', 1)
   {%- else -%}
-    {#-- DuckDB family: duckrun, iceberg, ducklake #}
+    {#-- DuckDB family (duckrun, iceberg, ducklake) and Polars SQL #}
     split_part(split_part({{ filepath }}, '/', -1), '.', 1)
   {%- endif -%}
 {% endmacro %}

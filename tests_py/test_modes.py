@@ -67,37 +67,28 @@ def test_a_leg_mints_the_tokens_its_profile_needs():
     assert "https://database.windows.net/" in run and "add-mask" in run
 
 
-def test_every_engine_reaches_exactly_one_build_step():
+def test_every_engine_builds_through_run_dbt():
+    """One build step, for every engine, with no condition: an engine run_dbt.py does not
+    know dies on its usage line instead of quietly building nothing."""
     src = (REPO / ".github" / "scripts" / "run_dbt.py").read_text(encoding="utf-8")
     m = re.search(r"^PROJECT = \{(.*?)\}", src, re.M | re.S)
     assert m, "run_dbt.py has no PROJECT dict"
-    driver = set(re.findall(r'"([a-z]+)":', m.group(1)))
-
-    client_step = [s for s in build()["steps"]
-                   if s.get("name") == "dbt build" and "working-directory" in s]
-    assert len(client_step) == 1, "the dwh/spark build step is not where this test expects it"
-    cond = str(client_step[0]["if"])
-    client = {e for e in ENGINES if f"matrix.engine == '{e}'" in cond}
-
-    assert driver & client == set(), f"{driver & client} matches two build steps"
-    assert driver | client == set(ENGINES), (
-        f"{set(ENGINES) - (driver | client)} reaches no build step at all"
-    )
-    driver_step = [s for s in build()["steps"] if s.get("name") == "dbt build on this runner"]
-    assert len(driver_step) == 1
-    for engine in client:
-        assert f"matrix.engine != '{engine}'" in str(driver_step[0]["if"])
+    assert set(re.findall(r'"([a-z]+)":', m.group(1))) == set(ENGINES)
+    steps = [s for s in build()["steps"] if "run_dbt.py" in str(s.get("run", ""))]
+    assert len(steps) == 1 and "if" not in steps[0]
 
 
-def test_every_leg_fingerprints_exactly_once():
+def test_every_leg_fingerprints_in_process():
     """A leg that writes no history/parity/<engine>.json is INVISIBLE: `parity.py compare` with
-    fewer than two fingerprints returns 0. The acceptance test silently does not run."""
+    fewer than two fingerprints returns 0. And it must be IN-PROCESS: spark's session (jars,
+    OneLake auth, registered tables) exists only inside run_dbt.py."""
     steps = build()["steps"]
-    driver = [s for s in steps if s.get("name") == "dbt build on this runner"]
-    assert driver and "--no-fingerprint" in str(driver[0]["run"])
-    fp = [s for s in steps if s.get("name") == "Fingerprint gold layer"]
-    assert len(fp) == 1 and "if" not in fp[0], (
-        "the fingerprint step is conditional -- a carve-out leaves a leg with no fingerprint"
+    run = [s for s in steps if "run_dbt.py" in str(s.get("run", ""))][0]["run"]
+    assert '--fingerprint-out "history/parity/$ENGINE.json"' in run
+    assert "--no-fingerprint" not in run
+    assert not [s for s in steps if "run-operation parity_fingerprint" in str(s.get("run", ""))], (
+        "a separate `dbt run-operation` step would start a fresh process -- for spark, a JVM "
+        "with no session setup"
     )
 
 
