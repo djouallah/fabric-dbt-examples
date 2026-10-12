@@ -1,0 +1,136 @@
+{
+ "inputs": {
+  "daily_download_limit": "60",
+  "dbt_schema": "mart",
+  "download_limit": "6",
+  "engines": "polars",
+  "local_runner": "true",
+  "process_limit": "10",
+  "spark_resource_profile": "readHeavyForPBI"
+ },
+ "items": {
+  "6D74EE03-7040-4C9E-B013-B7F08B8FA4DE": {
+   "kind": "Lakehouse",
+   "name": "dbt",
+   "role": "data"
+  },
+  "9E690A88-F8A6-44F1-8734-D9FBA4D585D7": {
+   "kind": "Folder",
+   "name": "dbt",
+   "role": "folder"
+  },
+  "C584E6AF-ADA1-4CE4-9957-6365B19EB0F5": {
+   "kind": "Lakehouse",
+   "name": "dbt_landing",
+   "role": "landing"
+  }
+ },
+ "layout": {
+  "config": {
+   "vcores": "8"
+  },
+  "detail_keys": [
+   "schema",
+   "total_rows",
+   "num_files",
+   "num_row_groups",
+   "avg_row_group",
+   "size_mb",
+   "vorder",
+   "compression"
+  ],
+  "engines": {
+   "polars": {
+    "guid": "6d74ee03-7040-4c9e-b013-b7f08b8fa4de",
+    "item": "dbt",
+    "kind": "Lakehouse",
+    "schema_prefix": "polars",
+    "writer": "polars (pyiceberg)"
+   }
+  },
+  "run": {
+   "id": "38186090030",
+   "sha": "0fc2c6ab6e8ebf8b9a3be9210a348b24aea79871",
+   "written": "2026-10-12T00:03:57Z"
+  },
+  "stats": {
+   "polars": {
+    "fct_price": {
+     "avg_row_group": 14400.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_landing",
+     "size_mb": 1.75,
+     "total_rows": 14400,
+     "vorder": false
+    },
+    "fct_price_today": {
+     "avg_row_group": 30.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_landing",
+     "size_mb": 0.03,
+     "total_rows": 30,
+     "vorder": false
+    },
+    "fct_scada": {
+     "avg_row_group": 549056.0,
+     "compression": "ZSTD",
+     "num_files": 2,
+     "num_row_groups": 3,
+     "schema": "polars_landing",
+     "size_mb": 13.88,
+     "total_rows": 1647168,
+     "vorder": false
+    },
+    "fct_scada_today": {
+     "avg_row_group": 2018.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_landing",
+     "size_mb": 0.02,
+     "total_rows": 2018,
+     "vorder": false
+    },
+    "stg_csv_archive_log": {
+     "avg_row_group": 76.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_landing",
+     "size_mb": 0.01,
+     "total_rows": 76,
+     "vorder": false
+    }
+   }
+  },
+  "tables": [
+   "stg_csv_archive_log",
+   "dim_calendar",
+   "dim_duid",
+   "fct_price",
+   "fct_price_today",
+   "fct_scada",
+   "fct_scada_today",
+   "fct_summary"
+  ]
+ },
+ "legs": {
+  "polars": {
+   "finished": "2026-10-12T00:03:10Z",
+   "outcome": "failure",
+   "started": "2026-10-11T23:59:49Z"
+  }
+ },
+ "run": {
+  "finished": "2026-10-12T00:04:05Z",
+  "id": "38186090030",
+  "sha": "0fc2c6ab6e8ebf8b9a3be9210a348b24aea79871",
+  "started": "2026-10-11T23:56:57Z",
+  "url": "https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38186090030"
+ },
+ "schema": 1
+}
