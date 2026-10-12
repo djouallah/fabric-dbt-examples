@@ -12,12 +12,16 @@ version: 2
 # `missing_columns: insert` is Polars 2's spelling of "pad the short rows": without it a
 # schema wider than the first line is an error.
 #
+# `database` is the polars catalog name on polars and EMPTY on every other target: these
+# sources are gated off there, but dbt still builds their relations at parse, and dbt-spark
+# refuses any relation with a database ("Cannot set database in spark!").
+#
 # GENERATED SHAPE: the `schema` maps are 131 identical entries; regenerate rather than edit.
 
 sources:
   - name: polars_landing
     description: The archive log download_aemo.py writes, read by stg_csv_archive_log.
-    database: landing
+    database: "{{ 'landing' if target.type == 'polars' else '' }}"
     schema: Files
     tables:
       - name: archive_log
@@ -27,7 +31,7 @@ sources:
 
   - name: polars_daily
     description: PUBLIC_DAILY files, folded by fct_price and fct_scada.
-    database: landing
+    database: "{{ 'landing' if target.type == 'polars' else '' }}"
     schema: Files/csv_raw/daily
     tables:
       - name: csv
@@ -38,7 +42,7 @@ sources:
 
   - name: polars_scada_today
     description: Intraday DISPATCHSCADA files, folded by fct_scada_today.
-    database: landing
+    database: "{{ 'landing' if target.type == 'polars' else '' }}"
     schema: Files/csv_raw/scada_today
     tables:
       - name: csv
@@ -49,7 +53,7 @@ sources:
 
   - name: polars_price_today
     description: Intraday DISPATCHIS price files, folded by fct_price_today.
-    database: landing
+    database: "{{ 'landing' if target.type == 'polars' else '' }}"
     schema: Files/csv_raw/price_today
     tables:
       - name: csv
@@ -60,7 +64,7 @@ sources:
 
   - name: polars_duid
     description: The reference CSVs dim_duid reads. They have headers.
-    database: landing
+    database: "{{ 'landing' if target.type == 'polars' else '' }}"
     schema: Files/csv_raw/duid
     tables:
       - name: duid_data
