@@ -20,6 +20,27 @@
             "pipelinecore": {
               "value": 2,
               "type": "int"
+            },
+            "engine": {
+              "value": {
+                "value": "@pipeline().parameters.engine",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "run_id": {
+              "value": {
+                "value": "@pipeline().parameters.run_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "land": {
+              "value": {
+                "value": "@pipeline().parameters.land",
+                "type": "Expression"
+              },
+              "type": "bool"
             }
           }
         }
@@ -49,10 +70,45 @@
             "pipelinecore": {
               "value": 8,
               "type": "int"
+            },
+            "engine": {
+              "value": {
+                "value": "@pipeline().parameters.engine",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "run_id": {
+              "value": {
+                "value": "@pipeline().parameters.run_id",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "land": {
+              "value": {
+                "value": "@pipeline().parameters.land",
+                "type": "Expression"
+              },
+              "type": "bool"
             }
           }
         }
       }
-    ]
+    ],
+    "parameters": {
+      "engine": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "run_id": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "land": {
+        "type": "bool",
+        "defaultValue": true
+      }
+    }
   }
 }

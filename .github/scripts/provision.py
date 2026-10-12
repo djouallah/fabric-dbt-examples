@@ -237,6 +237,15 @@ def main() -> int:
         # Reads the landing zone directly — no shortcut, no second copy.
         emit("FILES_PATH", landing_path)
 
+    # The storage token the iceberg / ducklake / polars profiles read. NOT ON CI, for the same
+    # reason as the SQL token below (stdout goes to $GITHUB_ENV unmasked; pipeline.yml mints it
+    # with the mask). Off CI -- the deployed `run` notebook, a laptop -- this is what provides it.
+    if engine in ("iceberg", "ducklake", "polars") and not os.environ.get("GITHUB_ACTIONS"):
+        try:
+            emit("ONELAKE_TOKEN", tokens.get_token("storage"))
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            log("  ! no `az` to mint the storage token; export ONELAKE_TOKEN yourself")
+
     if engine == "duckrun":
         emit("ONELAKE_TABLES_PATH", abfss(data_id, "Tables"))
 

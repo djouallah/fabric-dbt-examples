@@ -61,9 +61,15 @@ argv = sys.argv[1:]
 # history/parity/<engine>.json is invisible, because parity.py compare just reports it has
 # fewer than two to compare and exits 0. Forgetting an opt-OUT costs one redundant query.
 fingerprint = "--no-fingerprint" not in argv
-engine = next((a for a in argv if not a.startswith("--")), "")
+# --fingerprint-out PATH: ALSO write the fingerprint JSON to PATH. The Fabric mode's notebook
+# passes a lakehouse path, which is how CI reads a Fabric run's fingerprint back
+# (fabric_run.py) -- there is no streamed log to lift it out of.
+fingerprint_out = argv[argv.index("--fingerprint-out") + 1] if "--fingerprint-out" in argv else ""
+engine = next((a for i, a in enumerate(argv)
+               if not a.startswith("--") and (i == 0 or argv[i - 1] != "--fingerprint-out")), "")
 if engine not in PROJECT:
-    sys.exit(f"usage: run_dbt.py [{' | '.join(PROJECT)}] [--no-fingerprint]")
+    sys.exit(f"usage: run_dbt.py [{' | '.join(PROJECT)}] [--no-fingerprint] "
+             f"[--fingerprint-out PATH]")
 project_dir = REPO / PROJECT[engine]
 
 # DuckDB spill. THE CALLER OWNS THIS: pipeline.yml sets DUCKDB_TEMP_DIR at job level for a
@@ -150,4 +156,26 @@ if not fingerprint:
 # Last, and only after a green build above: the run-operation reads the gold TABLE, not the run, so
 # taken after a failure it reports the previous run's numbers and parity.py would grade this
 # run on them.
-sys.exit(0 if run("run-operation", "parity_fingerprint") else 1)
+if not fingerprint_out:
+    sys.exit(0 if run("run-operation", "parity_fingerprint") else 1)
+
+# A file wanted: the same run-operation as a `dbt` subprocess, whose output parity.extract()
+# reads -- dbtRunner logs to this process's stdout, which it cannot capture cleanly.
+import json  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+sys.path.insert(0, str(REPO / ".github" / "scripts"))
+import parity  # noqa: E402
+
+dbt = shutil.which("dbt") or str(Path(sys.executable).parent / "dbt")
+res = subprocess.run([dbt, "run-operation", "parity_fingerprint", *BASE],
+                     capture_output=True, text=True)
+print(res.stdout, flush=True)
+fp = parity.extract(res.stdout)
+if res.returncode or fp is None:
+    print(res.stderr[-2000:], file=sys.stderr)
+    sys.exit("fingerprint failed: no JSON in the run-operation output")
+Path(fingerprint_out).parent.mkdir(parents=True, exist_ok=True)
+Path(fingerprint_out).write_text(json.dumps(fp, indent=2) + "\n", encoding="utf-8")
+print(f"wrote {fingerprint_out}", flush=True)

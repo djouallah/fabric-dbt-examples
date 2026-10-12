@@ -1,71 +1,78 @@
 #!/usr/bin/env python3
-"""Deploy the in-Fabric demo: the repo into the shared lakehouse, the scheduling items, and a
-Direct Lake semantic model per engine. GitHub Actions is the real orchestrator; the notebook
-and pipeline are the demo of in-Fabric scheduling.
+"""Deploy to Fabric with fabric-cicd: the repo into the shared lakehouse, the run items, and a
+Direct Lake semantic model per engine. One half of the Fabric mode (the other is running the
+deployed pipeline, .github/scripts/fabric_run.py); see AGENTS.md "Two ways to run".
 
-Run by the `deploy` job of .github/workflows/pipeline.yml (dispatch input `deploy`: none |
-no_model | full), AFTER the build legs, with the legs' OIDC identity: duckrun mints the
-storage, Fabric and Power BI tokens from the GitHub assertion, so there is no login step.
+Run by pipeline.yml after `azure/login` (fabric-cicd and tokens.py both use the CLI login).
 On a laptop, after `az login`:
 
     DEPLOY_ENGINES=iceberg python deploy.py
 
-Env-driven, no argv -- the same shape as the source repo's deploy.py:
+Env-driven, no argv:
 
     FABRIC_WORKSPACE_ID    required
-    DEPLOY_ENGINES         comma list of engines to provision and bind a model for (default: all)
-    DEPLOY_SEMANTIC_MODEL  "false" skips the models -- and the Direct Lake reframe, the slow part
+    DEPLOY_PARTS           comma list of: repo, items, models, schedule (default: all four)
+    DEPLOY_ENGINES         engines to provision and bind a model for (default: all)
+    DEPLOY_SEMANTIC_MODEL  "false" drops `models` from DEPLOY_PARTS (the pipeline's no_model)
     DBT_SCHEMA             the schema the engines were built with (default mart), see mart_schema()
     FOLDER                 the workspace folder every item lands in (default dbt)
 
 WHAT IT DOES, IN ORDER
   1. .github/scripts/provision.py <engine>, per engine: every Fabric item exists (idempotent).
-  2. The git-tracked repo goes to Files/dbt/ of the shared `dbt` lakehouse, stale files removed.
-     That copy is what fabric_items/run.Notebook runs: the SAME provision / land / build scripts
-     CI runs, on the engine variables.json names (dbt_target).
-  3. fabric_items/ (variable library, notebook, pipeline). The values in variables.json ARE the
-     notebook's configuration; edit the file to change the engine or the limits.
-  4. Unless DEPLOY_SEMANTIC_MODEL=false: the semantic model, once per engine, as aemo_<engine>
-     bound to <engine>_mart.
-  5. The pipeline's 12-hourly schedule.
+  2. repo: the git-tracked repo goes to Files/dbt/ of the shared `dbt` lakehouse, stale files
+     removed. That copy is what fabric_items/run.Notebook runs: the SAME provision / land /
+     build scripts the local mode runs.
+  3. items: fabric_items/ (variable library, notebook, pipeline) through fabric-cicd's
+     publish_all_items. fabric_items/parameter.yml points the pipeline's activities at THIS
+     workspace; fabric-cicd itself resolves the notebook's logical id to the deployed item.
+  4. models: the semantic model, once per engine, as aemo_<engine> bound to <engine>_mart.
+  5. schedule: the pipeline's 12-hourly schedule (Fabric REST job scheduler).
 
 DIRECT LAKE HAS NO SCHEMA PARAMETER. A partition's schemaName is a literal in the model
-definition, and duckrun's deploy() rewrites only the OneLake GUIDs -- so the committed model.bim
-carries placeholders (`mart`, and Desktop's GUIDs) and rebind_schema() writes the engine's schema
-in at deploy time, the way the GUIDs are. Every engine writes <engine>_mart
-(macros/generate_schema_name.sql); DBT_SCHEMA prefixes it here exactly as it does there.
+definition, so the committed model.bim carries placeholders -- `mart`, and Desktop's workspace /
+lakehouse GUIDs in the OneLake expression -- and bind_model() writes the engine's schema and
+item in at deploy time. Every engine writes <engine>_mart (macros/generate_schema_name.sql);
+DBT_SCHEMA prefixes it here exactly as it does there.
 
 ORDER MATTERS: a Direct Lake model is REFRAMED on deploy, which needs <schema>.fct_summary to
-exist -- which is why the deploy job runs after the build legs.
+exist -- which is why `models` is deployed after the build.
 
-dwh binds the same bim to the Warehouse item as Direct Lake on OneLake (mode="direct_lake": a
-warehouse's tables are Delta in OneLake). The four lakehouse engines share one lakehouse and are
-separated by schema, so their models differ in that one string only.
-
-One backend, duckrun, for all five engines. There used to be a `fab` CLI backend for dwh and
-ducklake because duckrun could not create a Warehouse or a SQL DB; provision.py creates both
-through the REST API now, so it is gone.
+dwh binds the same bim to the Warehouse item (Direct Lake on OneLake: a warehouse's tables are
+Delta in OneLake). The lakehouse engines share one lakehouse and are separated by schema, so
+their models differ in that one string only.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 SCRIPTS = REPO / ".github" / "scripts"
-BIM = REPO / "semantic_model" / "aemo_electricity.SemanticModel" / "model.bim"
+MODEL_DIR = REPO / "semantic_model" / "aemo_electricity.SemanticModel"
+BIM = MODEL_DIR / "model.bim"
 ENGINES = ("duckrun", "iceberg", "ducklake", "dwh", "spark", "polars")
+PARTS = ("repo", "items", "models", "schedule")
+
+# Desktop's GUIDs in model.bim's OneLake expression: <workspace>/<lakehouse>.
+BIM_WORKSPACE = "e446a5e7-6666-42ad-a331-0bfef3187fbf"
+BIM_ITEM = "cf8bbf8a-5488-4020-ac8f-293727b447b1"
 
 WS = os.environ.get("FABRIC_WORKSPACE_ID", "")
 FOLDER = os.environ.get("FOLDER", "dbt")
 DEPLOY_ENGINES = [e.strip() for e in os.environ.get("DEPLOY_ENGINES", ",".join(ENGINES)).split(",")
                   if e.strip()]
-DEPLOY_MODEL = os.environ.get("DEPLOY_SEMANTIC_MODEL", "true").lower() != "false"
-SCHEDULE_EVERY = "720m"
+DEPLOY_PARTS = [p.strip() for p in os.environ.get("DEPLOY_PARTS", ",".join(PARTS)).split(",")
+                if p.strip()]
+if os.environ.get("DEPLOY_SEMANTIC_MODEL", "true").lower() == "false":
+    DEPLOY_PARTS = [p for p in DEPLOY_PARTS if p != "models"]
+PIPELINE = "run_pipeline"
+SCHEDULE_MINUTES = 720
 
 
 def log(m: str) -> None:
@@ -83,8 +90,7 @@ def rebind_schema(bim_text: str, schema: str) -> str:
     """Point every Direct Lake partition (and its table's lineage tag) at `schema`.
 
     Walks the JSON rather than replacing text, so a reformatted bim cannot leave a partition
-    silently on the `mart` placeholder -- a model bound to a schema no engine writes. The OneLake
-    GUIDs are left alone: duckrun's deploy(lakehouse=/warehouse=) rewrites those."""
+    silently on the `mart` placeholder -- a model bound to a schema no engine writes."""
     model = json.loads(bim_text)
     for table in model["model"].get("tables", []):
         for part in table.get("partitions", []):
@@ -97,69 +103,146 @@ def rebind_schema(bim_text: str, schema: str) -> str:
     return json.dumps(model, indent=2) + "\n"
 
 
+def bind_model(bim_text: str, schema: str, workspace_id: str, item_id: str) -> str:
+    """rebind_schema, plus the OneLake expression pointed at <workspace_id>/<item_id>."""
+    if f"{BIM_WORKSPACE}/{BIM_ITEM}" not in bim_text:
+        raise SystemExit("model.bim no longer carries the placeholder OneLake GUIDs deploy.py "
+                         "rewrites -- update BIM_WORKSPACE / BIM_ITEM")
+    bound = bim_text.replace(f"{BIM_WORKSPACE}/{BIM_ITEM}", f"{workspace_id}/{item_id}")
+    return rebind_schema(bound, schema)
+
+
+# ---------------------------------------------------------------------------------- parts
+
+def copy_repo(provision) -> None:
+    """`git ls-files` into Files/dbt/ of the shared lakehouse; stale remote files removed."""
+    import onelake
+
+    files = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, check=True,
+                           capture_output=True).stdout.decode().split("\0")
+    files = [f for f in files if f and (REPO / f).is_file()]
+    data_id = provision.find("lakehouses", provision.DATA_LAKEHOUSE)
+    base = f"{provision.abfss(data_id, 'Files')}/dbt"
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in files:
+            dst = Path(tmp) / f
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / f, dst)
+        n = onelake.put_dir(tmp, base, overwrite=True)
+    stale = sorted(set(onelake.list_keys(base)) - set(files))
+    for key in stale:
+        try:
+            onelake.delete(base, key)
+        except FileNotFoundError:
+            pass
+    log(f"copied {n} files into {provision.DATA_LAKEHOUSE}/Files/dbt ({len(stale)} stale removed)")
+
+
+def publish(stage: Path, item_types: list[str]) -> None:
+    from fabric_cicd import FabricWorkspace, publish_all_items
+
+    ws = FabricWorkspace(workspace_id=WS, environment="ci", repository_directory=str(stage),
+                         item_type_in_scope=item_types)
+    publish_all_items(ws)
+
+
+def move_into_folder(provision, names: list[tuple[str, str]]) -> None:
+    """fabric-cicd publishes at the workspace root; the items live in FOLDER, beside the
+    lakehouses provision.py made. Idempotent."""
+    folder_id = provision.ensure_folder(FOLDER)
+    if not folder_id:
+        return
+    for kind, name in names:
+        item_id = provision.find(kind, name)
+        if item_id:
+            provision.move_to_folder(item_id, folder_id)
+
+
+def deploy_items(provision) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = Path(tmp)
+        shutil.copytree(REPO / "fabric_items", stage, dirs_exist_ok=True)
+        publish(stage, ["VariableLibrary", "Notebook", "DataPipeline"])
+    move_into_folder(provision, [("notebooks", "run"), ("dataPipelines", PIPELINE),
+                                 ("variableLibraries", "deploy_config")])
+    log("deployed fabric_items")
+
+
+def deploy_models(provision) -> None:
+    data_id = provision.find("lakehouses", provision.DATA_LAKEHOUSE)
+    names = []
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = Path(tmp)
+        for engine in DEPLOY_ENGINES:
+            schema = mart_schema(engine)
+            item_id = (provision.find("warehouses", provision.DWH_WAREHOUSE)
+                       if engine == "dwh" else data_id)
+            name = f"aemo_{engine}"
+            d = stage / f"{name}.SemanticModel"
+            shutil.copytree(MODEL_DIR, d)
+            (d / "model.bim").write_text(
+                bind_model(BIM.read_text(encoding="utf-8-sig"), schema, WS, item_id),
+                encoding="utf-8")
+            platform = json.loads((d / ".platform").read_text(encoding="utf-8"))
+            platform["metadata"]["displayName"] = name
+            platform["config"]["logicalId"] = str(uuid.uuid5(uuid.NAMESPACE_URL, name))
+            (d / ".platform").write_text(json.dumps(platform, indent=2) + "\n", encoding="utf-8")
+            names.append(("semanticModels", name))
+            log(f"semantic model {name} over {schema}")
+        publish(stage, ["SemanticModel"])
+    move_into_folder(provision, names)
+
+
+def schedule(provision) -> None:
+    """The pipeline's schedule, through the Fabric job scheduler. Updated in place when one
+    exists, so redeploys do not stack duplicates."""
+    from datetime import datetime, timedelta, timezone
+
+    pid = provision.find("dataPipelines", PIPELINE)
+    if not pid:
+        raise SystemExit(f"{PIPELINE} is not deployed; deploy `items` first")
+    start = datetime.now(timezone.utc).replace(microsecond=0)
+    body = {"enabled": True, "configuration": {
+        "type": "Cron", "interval": SCHEDULE_MINUTES, "localTimeZoneId": "UTC",
+        "startDateTime": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "endDateTime": (start + timedelta(days=3650)).strftime("%Y-%m-%dT%H:%M:%SZ")}}
+    path = f"workspaces/{WS}/items/{pid}/jobs/Pipeline/schedules"
+    existing = provision.req("GET", path).json().get("value", [])
+    if existing:
+        provision.req("PATCH", f"{path}/{existing[0]['id']}", json=body)
+    else:
+        provision.req("POST", path, json=body)
+    log(f"{PIPELINE} scheduled every {SCHEDULE_MINUTES} minutes")
+
+
 def main() -> int:
     if not WS:
         raise SystemExit("FABRIC_WORKSPACE_ID is not set")
     unknown = sorted(set(DEPLOY_ENGINES) - set(ENGINES))
     if unknown:
         raise SystemExit(f"DEPLOY_ENGINES: unknown engine(s) {unknown}; choose from {ENGINES}")
+    bad = sorted(set(DEPLOY_PARTS) - set(PARTS))
+    if bad:
+        raise SystemExit(f"DEPLOY_PARTS: unknown part(s) {bad}; choose from {PARTS}")
 
-    # provision.py reads FABRIC_WORKSPACE_ID at import, hence after the check. It is the one
-    # place the item names live.
+    # provision.py reads FABRIC_WORKSPACE_ID at import, hence after the check.
     sys.path.insert(0, str(SCRIPTS))
     import provision  # noqa: E402
-    import duckrun  # noqa: E402
-    from duckrun.workspace import RemoteRunError  # noqa: E402
 
     for engine in DEPLOY_ENGINES:
         log(f"provisioning {engine}")
         subprocess.run([sys.executable, str(SCRIPTS / "provision.py"), engine],
                        check=True, stdout=subprocess.DEVNULL, cwd=REPO)
 
-    ws = duckrun.workspace(WS)
-    lh = provision.DATA_LAKEHOUSE
-    # Exactly `git ls-files` (no target/, logs/, local secrets), into Files/dbt/, with stale
-    # remote files under that prefix removed. Anchored at REPO, not the cwd.
-    duckrun.connect(f"{ws.display_name}/{lh}.Lakehouse").copy(
-        str(REPO), "dbt", git_only=True, sync=True, overwrite=True)
-    log(f"copied the repo into {lh}/Files/dbt")
-
-    # _scan_item_folders validates EVERY item folder before deploying ANY of them and raises on
-    # an unknown type, so one stray folder under fabric_items/ makes this ship nothing. That is
-    # why the semantic model lives in its own directory. duckrun points the pipeline's notebook
-    # activities at the folder's one notebook itself.
-    ws.deploy(str(REPO / "fabric_items"), folder=FOLDER, overwrite=True)
-    log("deployed fabric_items")
-
-    if DEPLOY_MODEL:
-        for engine in DEPLOY_ENGINES:
-            schema = mart_schema(engine)
-            # `warehouse=` alone is duckrun's DirectQuery path and raises on a Direct Lake bim;
-            # mode="direct_lake" is what binds a Warehouse item's OneLake root instead.
-            source = ({"warehouse": provision.DWH_WAREHOUSE, "mode": "direct_lake"}
-                      if engine == "dwh" else {"lakehouse": lh})
-            with tempfile.TemporaryDirectory() as tmp:
-                bim = Path(tmp) / "model.bim"  # the extension is how duckrun types the item
-                bim.write_text(rebind_schema(BIM.read_text(encoding="utf-8-sig"), schema),
-                               encoding="utf-8")
-                try:
-                    # overwrite=True is an in-place updateDefinition: the item id, and with it
-                    # every report bound to the model, survives.
-                    ws.deploy(str(bim), name=f"aemo_{engine}", folder=FOLDER, overwrite=True,
-                              **source)
-                except RemoteRunError as e:
-                    raise SystemExit(
-                        f"semantic model aemo_{engine} failed to deploy: {e}\n"
-                        f"A Direct Lake model reframes on deploy, so {schema}.fct_summary must "
-                        f"exist -- build {engine} once first."
-                    ) from e
-            log(f"deployed semantic model aemo_{engine} over {schema}")
-    else:
-        log("skipping the semantic models (DEPLOY_SEMANTIC_MODEL=false)")
-
-    # Idempotent: updates the existing schedule rather than stacking duplicates.
-    ws.schedule("run_pipeline", every=SCHEDULE_EVERY)
-    log(f"run_pipeline scheduled every {SCHEDULE_EVERY}; done")
+    if "repo" in DEPLOY_PARTS:
+        copy_repo(provision)
+    if "items" in DEPLOY_PARTS:
+        deploy_items(provision)
+    if "models" in DEPLOY_PARTS:
+        deploy_models(provision)
+    if "schedule" in DEPLOY_PARTS:
+        schedule(provision)
+    log("done")
     return 0
 
 

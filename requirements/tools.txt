@@ -11,3 +11,5 @@ duckdb
 obstore
 # layout.py's Delta-log reads (delta_stats.py).
 deltalake
+# deploy.py: publishing the Fabric items (the Fabric mode).
+fabric-cicd

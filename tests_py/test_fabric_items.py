@@ -138,3 +138,42 @@ def test_rebind_schema_rewrites_every_partition_and_nothing_else():
     guids = re.findall(r"onelake\.dfs\.fabric\.microsoft\.com/([0-9a-f-]{36})/([0-9a-f-]{36})", original)
     assert guids and re.findall(r"onelake\.dfs\.fabric\.microsoft\.com/([0-9a-f-]{36})/([0-9a-f-]{36})", out) == guids
     assert '"schemaName": "mart"' not in out
+
+
+def test_parameter_yml_retargets_every_workspace_guid_in_the_pipeline():
+    """fabric-cicd resolves the notebook's logicalId itself; the authoring workspace GUID it
+    does not -- parameter.yml must cover every one, or the activities point at a workspace
+    that is not the one deployed to."""
+    import re
+
+    import yaml
+
+    params = yaml.safe_load((REPO / "fabric_items" / "parameter.yml").read_text(encoding="utf-8"))
+    finds = {e["find_value"] for e in params["find_replace"]}
+    p = json.loads(PIPELINE.read_text(encoding="utf-8"))
+    for a in p["properties"]["activities"]:
+        assert a["typeProperties"]["workspaceId"] in finds, a["name"]
+    nb_id = json.loads((REPO / "fabric_items" / "run.Notebook" / ".platform")
+                       .read_text(encoding="utf-8"))["config"]["logicalId"]
+    for a in p["properties"]["activities"]:
+        assert a["typeProperties"]["notebookId"] == nb_id, (a["name"], "notebookId != logicalId")
+
+
+def test_pipeline_passes_engine_run_id_and_land_to_the_notebook():
+    p = json.loads(PIPELINE.read_text(encoding="utf-8"))
+    assert set(p["properties"]["parameters"]) >= {"engine", "run_id", "land"}
+    for a in p["properties"]["activities"]:
+        assert set(a["typeProperties"]["parameters"]) >= {"pipelinecore", "engine", "run_id", "land"}
+    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    tagged = [c for c in nb["cells"] if "parameters" in c.get("metadata", {}).get("tags", [])]
+    assert len(tagged) == 1
+    src = "".join(tagged[0]["source"])
+    for name in ("engine", "run_id", "land"):
+        assert f"{name} =" in src, name
+
+
+def test_bind_model_rewrites_the_onelake_guids():
+    text = BIM.read_text(encoding="utf-8-sig")
+    out = deploy.bind_model(text, "polars_mart", "WS-GUID", "ITEM-GUID")
+    assert "WS-GUID/ITEM-GUID" in out
+    assert deploy.BIM_WORKSPACE not in out and deploy.BIM_ITEM not in out

@@ -21,6 +21,11 @@ on:
         type: choice
         default: all
         options: [all, duckrun, iceberg, ducklake, dwh, spark, polars]
+      mode:
+        description: WHERE dbt runs. local = every engine builds on this GitHub runner. fabric = deploy the items with fabric-cicd and run the deployed pipeline in Fabric (duckrun, iceberg, ducklake, polars); dwh and spark are Fabric-compute clients and build from the runner either way.
+        type: choice
+        default: local
+        options: [local, fabric]
       dbt_schema:
         description: DBT_SCHEMA — leave as 'mart' for production (schemas are <engine>_landing / <engine>_mart), or set e.g. 'test' to land the whole run in test_<engine>_landing / test_<engine>_mart instead
         type: string
@@ -70,6 +75,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       engines: ${{ steps.pick.outputs.engines }}
+      # Split by WHERE each builds: `local` on this runner (the build job), `fabric` through the
+      # deployed pipeline (the fabric job). In local mode everything is local. In fabric mode
+      # the four in-process engines go to Fabric; dwh and spark stay clients on the runner.
+      local: ${{ steps.pick.outputs.local }}
+      fabric: ${{ steps.pick.outputs.fabric }}
     steps:
       - id: pick
         # A GitHub matrix cannot be filtered by an input, so the list is computed here.
@@ -91,9 +101,17 @@ jobs:
                 {"engine":"spark","label":"⚡ fabric · spark"},
                 {"engine":"polars","label":"🐻‍❄️ polars · iceberg"}]'
           if [ "${{ inputs.engines }}" = "all" ]; then
-            echo "engines=$(echo "$ALL" | jq -c .)" >> "$GITHUB_OUTPUT"
+            SEL=$(echo "$ALL" | jq -c .)
           else
-            echo "engines=$(echo "$ALL" | jq -c --arg e '${{ inputs.engines }}' '[.[]|select(.engine==$e)]')" >> "$GITHUB_OUTPUT"
+            SEL=$(echo "$ALL" | jq -c --arg e '${{ inputs.engines }}' '[.[]|select(.engine==$e)]')
+          fi
+          echo "engines=$SEL" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.mode }}" = "fabric" ]; then
+            echo "local=$(echo "$SEL" | jq -c '[.[]|select(.engine=="dwh" or .engine=="spark")]')" >> "$GITHUB_OUTPUT"
+            echo "fabric=$(echo "$SEL" | jq -c '[.[]|select(.engine!="dwh" and .engine!="spark")]')" >> "$GITHUB_OUTPUT"
+          else
+            echo "local=$SEL" >> "$GITHUB_OUTPUT"
+            echo "fabric=[]" >> "$GITHUB_OUTPUT"
           fi
 
   # LAND ONCE, HERE, so the five build legs can run at the same time.
@@ -188,6 +206,7 @@ jobs:
   # dbt_project.yml, keyed on the target name.
   build:
     needs: [plan, land]
+    if: ${{ needs.plan.outputs.local != '[]' }}
     # Cosmetic only — `matrix.engine` below is still the real target name.
     name: build (${{ matrix.label }})
     strategy:
@@ -195,7 +214,7 @@ jobs:
       # landing zone is already written by the `land` job above, so nothing is contended.
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.engines) }}
+        include: ${{ fromJSON(needs.plan.outputs.local) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # The workflow-level block is `contents: write` for the record job's commit; a build leg
@@ -382,6 +401,93 @@ jobs:
           path: ${{ runner.temp }}/record/
           if-no-files-found: ignore
 
+  # ---- THE FABRIC MODE ---------------------------------------------------------------
+  # Deploy the repo copy and the run items (fabric-cicd), then run the deployed pipeline once
+  # per in-process engine and wait for it. The notebook runs the SAME scripts the build job
+  # runs; CI already landed once (`land`), so each run is started with land=False. The
+  # pipeline's concurrency is 1: the engines queue in Fabric rather than contend.
+  fabric_deploy:
+    name: deploy to Fabric
+    needs: [plan, land]
+    if: ${{ needs.plan.outputs.fabric != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+      DBT_SCHEMA: ${{ inputs.dbt_schema }}
+      DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.fabric).*.engine, ',') }}
+      DEPLOY_PARTS: repo,items
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/*.txt
+      - run: pip install -r requirements/tools.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Deploy the repo and the run items
+        run: python deploy.py
+
+  fabric:
+    needs: [plan, fabric_deploy]
+    name: fabric (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.fabric) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENGINE: ${{ matrix.engine }}
+      FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/*.txt
+      - run: pip install -r requirements/tools.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Open the leg's record fragment
+        run: echo "RUN_RECORD=$RUNNER_TEMP/record/record-20-fabric-$ENGINE.json" >> "$GITHUB_ENV"
+      - name: Record leg start
+        run: python .github/scripts/record.py leg-start "$ENGINE"
+      # Starts run_pipeline for this engine, waits, and copies the notebook's fingerprint to
+      # history/parity/<engine>.json -- where the build job's fingerprint step writes.
+      - name: Run in Fabric
+        run: python .github/scripts/fabric_run.py "$ENGINE"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: parity-${{ matrix.engine }}
+          path: history/parity/${{ matrix.engine }}.json
+          if-no-files-found: warn
+      - name: Record leg end
+        if: always()
+        run: python .github/scripts/record.py leg-end "$ENGINE" "${{ job.status }}"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: record-fragment-fabric-${{ matrix.engine }}
+          path: ${{ runner.temp }}/record/
+          if-no-files-found: ignore
+
   # Iceberg accumulates small files and has no snapshot expiry, so compaction is a job of its
   # own. `needs` is for ORDERING only — never overlap a rewrite with a load, and never let the
   # `layout` job below measure a table mid-rewrite — and it must NOT gate on the build
@@ -393,7 +499,7 @@ jobs:
   compact:
     name: compact iceberg
     if: ${{ (inputs.engines == 'all' || inputs.engines == 'iceberg') && !cancelled() }}
-    needs: [land, build]
+    needs: [land, build, fabric]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     continue-on-error: true
@@ -460,7 +566,7 @@ jobs:
     # `compact` too, and explicitly: it rewrites exactly the files this job measures. When the
     # run built no iceberg leg that job is SKIPPED, and `if: !cancelled()` below is what keeps
     # this one running anyway -- a skipped `needs` otherwise skips the jobs behind it.
-    needs: [plan, build, compact]
+    needs: [plan, build, fabric, compact]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Footers over OneLake for five engines' worth of tables; the source repo's four items
@@ -511,7 +617,7 @@ jobs:
   # a failed leg still spent capacity, and that still has to be attributable.
   record:
     name: parity + record
-    needs: [build, layout]
+    needs: [build, fabric, layout]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -608,8 +714,8 @@ jobs:
   # Azure login: the storage, Fabric and Power BI tokens come from `az` (tokens.py).
   deploy:
     name: deploy demo (optional)
-    needs: [plan, build]
-    if: ${{ inputs.deploy != 'none' }}
+    needs: [plan, build, fabric]
+    if: ${{ !cancelled() && inputs.deploy != 'none' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -627,7 +733,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/*.txt
-      - run: pip install -r requirements/duckrun.txt -r requirements/tools.txt
+      - run: pip install -r requirements/tools.txt
       - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}

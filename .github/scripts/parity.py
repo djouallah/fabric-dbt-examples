@@ -40,20 +40,26 @@ APPROX = ["mw_sum", "price_sum"]
 REL_TOL = 1e-7
 
 
+def extract(text: str) -> dict | None:
+    """The fingerprint object in a `dbt run-operation parity_fingerprint` log, or None.
+
+    The JSON comes out of a log() call, and dbt 1.x and 2.x do not prefix log lines the
+    same way -- v2 can put its own text on the line carrying the closing brace. So the
+    terminator is "a newline, then a closing brace with nothing structural before it",
+    not "a brace alone at the start of a line". Both shapes are covered by
+    tests_py/test_parity_capture.py."""
+    m = re.search(r"\{\s*\"engine\".*?\n[^\n{}]*\}", text, re.S)
+    return json.loads(m.group(0)) if m else None
+
+
 def capture(out_dir: Path) -> int:
     """Read a `dbt run-operation parity_fingerprint` log on stdin, save the JSON object."""
     text = sys.stdin.read()
-    # The JSON comes out of a log() call, and dbt 1.x and 2.x do not prefix log lines the
-    # same way -- v2 can put its own text on the line carrying the closing brace. So the
-    # terminator is "a newline, then a closing brace with nothing structural before it",
-    # not "a brace alone at the start of a line". Both shapes are covered by
-    # tests_py/test_parity_capture.py.
-    m = re.search(r"\{\s*\"engine\".*?\n[^\n{}]*\}", text, re.S)
-    if not m:
+    fp = extract(text)
+    if fp is None:
         print("no fingerprint JSON found in the run-operation output", file=sys.stderr)
         print(text[-2000:], file=sys.stderr)
         return 1
-    fp = json.loads(m.group(0))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{fp['engine']}.json"
     path.write_text(json.dumps(fp, indent=2) + "\n", encoding="utf-8")

@@ -1,0 +1,9 @@
+# fabric-cicd's find/replace for deploy.py (environment "ci"). The pipeline's two notebook
+# activities carry the workspace GUID the items were authored in; point them at the workspace
+# being deployed to. The notebookId beside it is the notebook's logicalId, which fabric-cicd
+# resolves to the deployed notebook by itself.
+find_replace:
+  - find_value: "e446a5e7-6666-42ad-a331-0bfef3187fbf"
+    replace_value:
+      ci: "$workspace.id"
+    item_type: "DataPipeline"
