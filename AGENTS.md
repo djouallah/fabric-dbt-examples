@@ -405,6 +405,13 @@ probe stays as the place to try an adapter question cheaply.
   - no `generate_series` (pola-rs/polars#29879); no options on `read_csv()` (pola-rs/polars#29880).
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`). Headerless reads name
   columns from `column_0` on Polars 2 -- irrelevant here, the padded `schema` names them.
+- **It builds ON THE RUNNER, not in Fabric.** `pipeline.yml`'s `REMOTE` list leaves it out:
+  launching a notebook needs duckrun on the runner, and duckrun (pins `deltalake==1.5.0`)
+  cannot share an environment with dbt-polars (Polars excludes `deltalake 1.5.*`) — pip
+  silently resolves duckrun 0.3.3, which has no `duckrun` module (djouallah/duckrun#83). So
+  `requirements/polars.txt` carries no duckrun, and the leg is subject to the 7 GB runner the
+  DuckDB legs were moved off; watch its memory on a large `process_limit`. `remote_dbt.py`
+  keeps a `polars` entry for when the clash is gone.
 - **Not compacted.** `compact_iceberg.py` is iceberg's alone.
 
 ## Why iceberg is not on dbt OSS 2

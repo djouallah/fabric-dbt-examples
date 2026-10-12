@@ -16,8 +16,8 @@
 # commit: they are separate packages in one repo, and the catalogs pin dbt-polars==<core
 # version>, which the fork keeps at upstream's.
 #
-# duckrun is the RUNNER's: remote_dbt.py imports it to start the Fabric notebook.
+# No duckrun: the polars leg builds on the GitHub runner, not in Fabric (see pipeline.yml's
+# REMOTE and djouallah/duckrun#83 -- the two cannot share an environment today).
 dbt-polars[iceberg] @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip
 dbt-polars-catalog-local @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-local
 dbt-polars-catalog-azure @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-azure
-duckrun

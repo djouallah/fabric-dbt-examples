@@ -236,7 +236,12 @@ jobs:
       # while the runner ran a bare `dbt build || dbt retry` with nothing of the sort. Both
       # places run the same .github/scripts/run_dbt.py now, so there is nothing left to pin, and
       # the two tokens the notebook used to inject are minted below.
-      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg", "polars"]'), matrix.engine) && !inputs.local_runner }}
+      #
+      # polars is NOT in the list: it builds on this runner. Launching it in Fabric needs
+      # duckrun next to dbt-polars, and the two cannot share an environment -- duckrun pins
+      # deltalake==1.5.0, Polars excludes 1.5.*, and pip silently falls back to duckrun 0.3.3,
+      # which has no `duckrun` module (djouallah/duckrun#83, run 38191324539).
+      REMOTE: ${{ contains(fromJSON('["duckrun", "ducklake", "iceberg"]'), matrix.engine) && !inputs.local_runner }}
       # A SIZE. `local_runner` is a PLACE, which is why it is a boolean input of its own and not
       # a `local` option here: remote_dbt.py reads this as int(), so folding the place into the
       # size would put a non-numeric value in front of that int() on every run with the toggle
