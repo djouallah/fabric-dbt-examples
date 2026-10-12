@@ -42,7 +42,7 @@ rebuild_dates AS (
   -- Never seen before: archive backfill, or a first build catching up.
   SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
   WHERE s.INTERVENTION = 0
-    AND s.DATE NOT IN (SELECT DISTINCT date FROM {{ this }})
+    AND s.DATE NOT IN (SELECT DISTINCT t.date FROM {{ this }} t)
   UNION
   -- Recently settled: the last 6 days of the daily feed.
   SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
@@ -73,7 +73,7 @@ daily_rows AS (
     AND s.INITIALMW <> 0
     AND p.INTERVENTION = 0
     {% if scoped %}
-    AND s.DATE IN (SELECT date FROM rebuild_dates)
+    AND s.DATE IN (SELECT rd.date FROM rebuild_dates rd)
     {% endif %}
 ),
 
@@ -89,12 +89,14 @@ today_rows AS (
   JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
   JOIN {{ ref('fct_price_today') }} p
     ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
+  -- Only units the daily branch will be able to reproduce once this date settles. A join on
+  -- the DISTINCT set rather than `IN (SELECT DUID ...)`: Polars SQL resolves the bare DUID in
+  -- that subquery against the outer s and d as well, and calls it ambiguous.
+  JOIN dispatch_duids dd ON s.DUID = dd.DUID
   CROSS JOIN scada_cutoff c
   WHERE
     s.INITIALMW <> 0
     AND p.INTERVENTION = 0
-    -- Only units the daily branch will be able to reproduce once this date settles.
-    AND s.DUID IN (SELECT DUID FROM dispatch_duids)
     AND s.SETTLEMENTDATE > c.max_ts
 ),
 
