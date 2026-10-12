@@ -2,11 +2,11 @@
   "engine": "spark",
   "adapter": "fabricspark",
   "model": "fct_summary",
-  "rows_total": 22981420,
+  "rows_total": 33717844,
   "duids": 390,
-  "days": 361,
-  "date_min": "2025-10-17",
+  "days": 531,
+  "date_min": "2025-04-30",
   "date_max": "2026-10-12",
-  "mw_sum": 2181844884.237699,
-  "price_sum": 1468960831.742293
+  "mw_sum": 3266451100.342382,
+  "price_sum": 2606416995.905852
 }

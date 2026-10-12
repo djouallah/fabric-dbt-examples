@@ -2,11 +2,11 @@
   "engine": "iceberg",
   "adapter": "duckdb",
   "model": "fct_summary",
-  "rows_total": 22981420,
+  "rows_total": 33717844,
   "duids": 390,
-  "days": 361,
-  "date_min": "2025-10-17",
+  "days": 531,
+  "date_min": "2025-04-30",
   "date_max": "2026-10-12",
-  "mw_sum": 2181844880.0044293,
-  "price_sum": 1468960825.9912374
+  "mw_sum": 3266451093.942673,
+  "price_sum": 2606416987.0406137
 }
