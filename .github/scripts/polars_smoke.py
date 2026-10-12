@@ -363,6 +363,22 @@ def probes(ctx):
          if one else None,
          [None], lambda c: expect_positive(c, "f_run_query_file")),
     ]
+    # dbt's own relationships test SQL, on keys where exactly one child has no parent. On the
+    # polars engine every daily fct_scada row was reported orphaned while fct_summary joined
+    # the same DUIDs fine -- is it the LEFT JOIN ... IS NULL on the right side?
+    out.append((len(out) + 1, "dbt relationships SQL (LEFT JOIN, right side IS NULL)",
+                "the generic test's anti-join: one orphan in three",
+                {"m_rel_child": "{{ config(materialized='table') }}\nselect 'A' as k union all "
+                                "select 'B' as k union all select 'C' as k",
+                 "m_rel_parent": "{{ config(materialized='table') }}\nselect 'A' as k union all "
+                                 "select 'B' as k",
+                 "m_rel_orphans": "{{ config(materialized='table') }}\n"
+                                  "with child as (select k as from_field from {{ ref('m_rel_child') }} "
+                                  "where k is not null), parent as (select k as to_field from "
+                                  "{{ ref('m_rel_parent') }}) select from_field from child left join "
+                                  "parent on child.from_field = parent.to_field "
+                                  "where parent.to_field is null"},
+                [None], lambda c: expect_rows(c, "m_rel_orphans", {("C",)})))
     for name, sql in SHAPES.items():
         out.append((len(out) + 1, f"SQL shape: {name[2:]}", "Polars SQL dialect, as the models write it",
                     {name: "{{ config(materialized='table') }}\n" + sql}, [None],
