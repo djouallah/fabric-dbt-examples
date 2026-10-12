@@ -1,0 +1,277 @@
+{
+ "inputs": {
+  "daily_download_limit": "60",
+  "dbt_schema": "mart",
+  "download_limit": "6",
+  "engines": "polars",
+  "local_runner": "true",
+  "process_limit": "10",
+  "spark_resource_profile": "readHeavyForPBI"
+ },
+ "items": {
+  "6D74EE03-7040-4C9E-B013-B7F08B8FA4DE": {
+   "kind": "Lakehouse",
+   "name": "dbt",
+   "role": "data"
+  },
+  "9E690A88-F8A6-44F1-8734-D9FBA4D585D7": {
+   "kind": "Folder",
+   "name": "dbt",
+   "role": "folder"
+  },
+  "C584E6AF-ADA1-4CE4-9957-6365B19EB0F5": {
+   "kind": "Lakehouse",
+   "name": "dbt_landing",
+   "role": "landing"
+  }
+ },
+ "layout": {
+  "config": {
+   "vcores": "8"
+  },
+  "detail_keys": [
+   "schema",
+   "total_rows",
+   "num_files",
+   "num_row_groups",
+   "avg_row_group",
+   "size_mb",
+   "vorder",
+   "compression"
+  ],
+  "encodings": {
+   "polars": {
+    "DUID": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 2.65,
+     "type": "BYTE_ARRAY"
+    },
+    "cutoff": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 0.01,
+     "type": "INT64"
+    },
+    "date": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 0.02,
+     "type": "INT32"
+    },
+    "mw": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 7.77,
+     "type": "INT64"
+    },
+    "price": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 3.59,
+     "type": "INT64"
+    },
+    "time": {
+     "chunks": 3,
+     "dict_pages": 3,
+     "encodings": [
+      "PLAIN",
+      "RLE",
+      "RLE_DICTIONARY"
+     ],
+     "mb": 1.22,
+     "type": "INT32"
+    }
+   }
+  },
+  "engines": {
+   "polars": {
+    "guid": "6d74ee03-7040-4c9e-b013-b7f08b8fa4de",
+    "item": "dbt",
+    "kind": "Lakehouse",
+    "schema_prefix": "polars",
+    "writer": "polars (pyiceberg)"
+   }
+  },
+  "ordering": {
+   "polars": {
+    "columns": {
+     "DUID": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 3,
+      "runs": 1841269
+     },
+     "cutoff": {
+      "rg_overlap_pct": 0.0,
+      "rgs": 3,
+      "runs": 1
+     },
+     "date": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 3,
+      "runs": 5621
+     },
+     "mw": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 3,
+      "runs": 1840390
+     },
+     "price": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 3,
+      "runs": 939754
+     },
+     "time": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 3,
+      "runs": 406858
+     }
+    },
+    "sample": {
+     "file": "00000-0-4b883d91-3a47-4327-b5f4-4fa4cdedaf84.parquet",
+     "rows": 1844491
+    },
+    "table": "polars_mart.fct_summary"
+   }
+  },
+  "run": {
+   "id": "38188546929",
+   "sha": "4743e6037d588e1668384b81a089ac960a917826",
+   "written": "2026-10-12T00:44:19Z"
+  },
+  "stats": {
+   "polars": {
+    "dim_calendar": {
+     "avg_row_group": 3197.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_mart",
+     "size_mb": 0.01,
+     "total_rows": 3197,
+     "vorder": false
+    },
+    "dim_duid": {
+     "avg_row_group": 690.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_mart",
+     "size_mb": 0.02,
+     "total_rows": 690,
+     "vorder": false
+    },
+    "fct_price": {
+     "avg_row_group": 14400.0,
+     "compression": "ZSTD",
+     "num_files": 4,
+     "num_row_groups": 4,
+     "schema": "polars_landing",
+     "size_mb": 7.02,
+     "total_rows": 57600,
+     "vorder": false
+    },
+    "fct_price_today": {
+     "avg_row_group": 30.0,
+     "compression": "ZSTD",
+     "num_files": 4,
+     "num_row_groups": 4,
+     "schema": "polars_landing",
+     "size_mb": 0.12,
+     "total_rows": 120,
+     "vorder": false
+    },
+    "fct_scada": {
+     "avg_row_group": 547628.0,
+     "compression": "ZSTD",
+     "num_files": 8,
+     "num_row_groups": 12,
+     "schema": "polars_landing",
+     "size_mb": 53.47,
+     "total_rows": 6571536,
+     "vorder": false
+    },
+    "fct_scada_today": {
+     "avg_row_group": 2011.0,
+     "compression": "ZSTD",
+     "num_files": 4,
+     "num_row_groups": 4,
+     "schema": "polars_landing",
+     "size_mb": 0.07,
+     "total_rows": 8044,
+     "vorder": false
+    },
+    "fct_summary": {
+     "avg_row_group": 820505.3,
+     "compression": "ZSTD",
+     "num_files": 2,
+     "num_row_groups": 3,
+     "schema": "polars_mart",
+     "size_mb": 15.27,
+     "total_rows": 2461516,
+     "vorder": false
+    },
+    "stg_csv_archive_log": {
+     "avg_row_group": 292.0,
+     "compression": "ZSTD",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "polars_landing",
+     "size_mb": 0.01,
+     "total_rows": 292,
+     "vorder": false
+    }
+   }
+  },
+  "tables": [
+   "stg_csv_archive_log",
+   "dim_calendar",
+   "dim_duid",
+   "fct_price",
+   "fct_price_today",
+   "fct_scada",
+   "fct_scada_today",
+   "fct_summary"
+  ]
+ },
+ "legs": {
+  "polars": {
+   "finished": "2026-10-12T00:43:21Z",
+   "outcome": "failure",
+   "started": "2026-10-12T00:38:19Z"
+  }
+ },
+ "run": {
+  "finished": "2026-10-12T00:44:30Z",
+  "id": "38188546929",
+  "sha": "4743e6037d588e1668384b81a089ac960a917826",
+  "started": "2026-10-12T00:36:05Z",
+  "url": "https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38188546929"
+ },
+ "schema": 1
+}
