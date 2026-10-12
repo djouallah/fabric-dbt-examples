@@ -392,14 +392,19 @@ probe stays as the place to try an adapter question cheaply.
   `dim_duid` anti-join `{{ this }}` on their keys.
 - **TIMESTAMP, not TIMESTAMPTZ.** Polars SQL has no zoned type by any spelling. The one type
   difference from the other engines; the README says so.
-- **Polars SQL bugs filed upstream, worked around here:** an unqualified column in an
-  `IN (SELECT ...)` subquery is resolved against the outer tables and called ambiguous
-  (pola-rs/polars#29876 -- qualify it, or join the distinct set); a `WITH` inside a derived
-  table is not resolved (pola-rs/polars#29877 -- put it in a CTE).
-- **Polars SQL dialect:** no `GROUP BY ALL`, no `generate_series` (`dbt.date_spine`), no
-  correlated or scalar subqueries in a select list (one-row `CROSS JOIN`s), `EXTRACT` for
-  `YEAR()`, `INTERVAL '6 days'`. Headerless reads name columns from `column_0` on Polars 2 —
-  irrelevant here because the padded `schema` names them.
+- **Polars SQL, verified on 2.0.0, and filed upstream where it is missing or wrong.** It
+  DOES take `GROUP BY ALL`, scalar and correlated subqueries, `YEAR()`, `INTERVAL 6 DAY` and
+  `first()`, so the polars copies keep the DuckDB text for those. What it forces:
+  - an unqualified column in an `IN (SELECT ...)` is resolved against the OUTER tables too and
+    called ambiguous: qualify it (pola-rs/polars#29876, bug);
+  - a `WITH` inside a derived table is not resolved; inside a CTE it is, which is where
+    `dbt.date_spine` goes (pola-rs/polars#29877, bug);
+  - no `current_date` / `current_timestamp` / `now()` by any spelling: `dbt.current_timestamp()`
+    renders the run's start as a literal (pola-rs/polars#28798);
+  - no zoned timestamp: TIMESTAMP where the others write TIMESTAMPTZ (pola-rs/polars#29878);
+  - no `generate_series` (pola-rs/polars#29879); no options on `read_csv()` (pola-rs/polars#29880).
+  Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`). Headerless reads name
+  columns from `column_0` on Polars 2 -- irrelevant here, the padded `schema` names them.
 - **Not compacted.** `compact_iceberg.py` is iceberg's alone.
 
 ## Why iceberg is not on dbt OSS 2

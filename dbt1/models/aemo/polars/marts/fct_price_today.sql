@@ -32,7 +32,7 @@ SELECT
   CAST(SETTLEMENTDATE AS TIMESTAMP) AS SETTLEMENTDATE,
   CAST(CAST(SETTLEMENTDATE AS TIMESTAMP) AS DATE) AS DATE,
   {{ parse_filename('filename') }} AS file,
-  CAST(EXTRACT(year FROM CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS YEAR
+  CAST(YEAR(CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS YEAR
 FROM staging
 {% else %}
 -- No unprocessed files: an empty result keeps the existing data untouched.

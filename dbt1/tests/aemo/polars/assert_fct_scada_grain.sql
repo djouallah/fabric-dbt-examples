@@ -2,5 +2,5 @@
 -- residual concurrent-writer race, and for an incremental strategy that stopped deduping.
 SELECT file, DUID, SETTLEMENTDATE, INTERVENTION, COUNT(*) AS n
 FROM {{ ref('fct_scada') }}
-GROUP BY file, DUID, SETTLEMENTDATE, INTERVENTION
+GROUP BY ALL
 HAVING COUNT(*) > 1

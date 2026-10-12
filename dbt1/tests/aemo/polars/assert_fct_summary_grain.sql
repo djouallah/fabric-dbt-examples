@@ -2,5 +2,5 @@
 -- residual concurrent-writer race, and for an incremental strategy that stopped deduping.
 SELECT date, time, DUID, COUNT(*) AS n
 FROM {{ ref('fct_summary') }}
-GROUP BY date, time, DUID
+GROUP BY ALL
 HAVING COUNT(*) > 1

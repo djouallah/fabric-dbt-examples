@@ -33,10 +33,10 @@ SELECT
        (polars_smoke probes 20-22). The values are the same AEMO market times. --#}
   CAST(SETTLEMENTDATE AS TIMESTAMP) AS SETTLEMENTDATE,
   CAST(CAST(SETTLEMENTDATE AS TIMESTAMP) AS DATE) AS DATE,
-  CAST(EXTRACT(year FROM CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS YEAR,
+  CAST(YEAR(CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS YEAR,
   {#-- Monthly partition key (YYYYMM), emitted on both daily facts by every engine. --#}
-  CAST(EXTRACT(year FROM CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) * 100
-    + CAST(EXTRACT(month FROM CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS month_key
+  CAST(YEAR(CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) * 100
+    + CAST(MONTH(CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS month_key
 FROM staging
 {% else %}
 -- No unprocessed files: an empty result keeps the existing data untouched.

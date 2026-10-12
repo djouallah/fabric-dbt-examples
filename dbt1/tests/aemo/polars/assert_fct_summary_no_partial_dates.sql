@@ -18,35 +18,27 @@
 -- those few dates are probed against fct_scada (measured: ~46s for 2 dates vs ~233s for a
 -- full-year aggregate). The latest date is excluded -- it is legitimately still filling.
 
---
--- Polars SQL dialect: the correlated per-date count is a GROUP BY joined back, the
--- "latest date" a one-row CROSS JOIN, and the 12-month bound an INTERVAL string.
-
 WITH per_date AS (
   SELECT date, COUNT(DISTINCT time) AS intervals
   FROM {{ ref('fct_summary') }}
-  -- dbt.current_timestamp(): Polars SQL has no current_date; dbt-polars renders the run's
-  -- start as a literal.
-  WHERE date >= CAST({{ dbt.current_timestamp() }} AS DATE) - INTERVAL '12 months'
+  -- dbt.current_timestamp() renders the run's start as a literal: Polars SQL has no
+  -- current_date (pola-rs/polars#28798).
+  WHERE date >= CAST({{ dbt.current_timestamp() }} AS DATE) - INTERVAL 12 MONTH
   GROUP BY date
 ),
-latest AS (
-  SELECT MAX(date) AS max_date FROM per_date
-),
 short AS (
-  SELECT p.date, p.intervals FROM per_date p
-  CROSS JOIN latest l
-  WHERE p.date < l.max_date AND p.intervals < 280
-),
-scada_per_date AS (
-  SELECT sc.DATE AS date, COUNT(DISTINCT sc.SETTLEMENTDATE) AS scada_intervals
-  FROM {{ ref('fct_scada') }} sc
-  WHERE sc.INTERVENTION = 0 AND sc.INITIALMW <> 0
-    AND sc.DATE IN (SELECT date FROM short)
-  GROUP BY sc.DATE
+  SELECT date, intervals FROM per_date
+  WHERE date < (SELECT MAX(date) FROM per_date) AND intervals < 280
 )
-SELECT s.date, s.intervals AS summary_intervals, c.scada_intervals
-FROM short s
-JOIN scada_per_date c ON s.date = c.date
-WHERE s.intervals < c.scada_intervals
-ORDER BY s.date
+SELECT *
+FROM (
+  SELECT
+    s.date,
+    s.intervals AS summary_intervals,
+    (SELECT COUNT(DISTINCT sc.SETTLEMENTDATE)
+     FROM {{ ref('fct_scada') }} sc
+     WHERE sc.DATE = s.date AND sc.INTERVENTION = 0 AND sc.INITIALMW <> 0) AS scada_intervals
+  FROM short s
+) x
+WHERE summary_intervals < scada_intervals
+ORDER BY date

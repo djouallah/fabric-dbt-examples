@@ -1,70 +1,82 @@
 -- depends_on: {{ ref('fct_scada_today') }}
 -- depends_on: {{ ref('fct_price_today') }}
 
--- Determinism contract: same inputs => same summary, on every engine, regardless of that
--- engine's run history. Every run emits the COMPLETE recomputation -- the same SQL as a full
--- refresh -- for exactly the dates whose stored content could still be stale, and the write
--- reconciles that batch key by key. The design, the rebuild window and dispatch_duids are
--- the iceberg copy's, verbatim in meaning; read that header for why each piece is there.
---
--- Insert-only, like the DuckDB family: a re-emitted key that is already stored is dropped,
--- a missing one is added. Here that is `append` plus the anti-join at the bottom, because
--- dbt-polars ignores merge_clauses -- the do-nothing merge would UPDATE instead.
---
--- Polars SQL dialect, where the DuckDB copy's does not parse: explicit GROUP BY columns for
--- GROUP BY ALL, scalar subqueries as one-row CROSS JOINs, an INTERVAL string, and TIMESTAMP
--- where the others compare TIMESTAMPTZ (Polars SQL has no zoned type).
+-- Determinism contract, rebuild window and dispatch_duids: the iceberg copy's, verbatim --
+-- read that header for why each piece is there. Only what dbt-polars or Polars SQL forces
+-- differs, each marked at its site:
+--   * insert-only by `append` + an anti-join on {{ this }} (the `insert_only` CTE at the
+--     bottom): dbt-polars ignores merge_clauses, so the do-nothing merge would UPDATE;
+--   * TIMESTAMP where the others cast TIMESTAMPTZ: Polars SQL has no zoned type
+--     (pola-rs/polars#29878);
+--   * the subqueries' columns qualified: Polars SQL resolves an unqualified name in an
+--     IN-subquery against the outer tables too, and calls it ambiguous (pola-rs/polars#29876).
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
     schema='mart'
 ) }}
 
-{# No full-history lever inside the model, deliberately. Reset = drop. #}
-{# Closes with `%}`, NOT `-%}`: a right-strip glues WITH onto the comment line above. #}
+{# No full-history lever inside the model, deliberately: a var that makes the incremental
+   branch emit all history would hand the merge the whole table as a source. Reset = drop. #}
+{# Closes with `%}`, NOT `-%}`: a right-strip swallows the newlines after this tag and
+   glues WITH onto the `-- depends_on` comment line above, commenting the keyword out
+   (the compiled SQL then starts at `daily_summary AS (` and the parser errors there). #}
 {%- set scoped = is_incremental() %}
 
 WITH
--- The unit universe the DAILY branch can reproduce; gates the intraday branch. Unbounded on
--- purpose (see the iceberg copy).
+-- The unit universe the DAILY branch can reproduce. Gates the intraday branch so it never
+-- emits a unit that will be unreproducible once the date settles (see the header).
+-- Deliberately UNBOUNDED, not a trailing window: fct_scada is append-only, so this set only
+-- ever GROWS and can never orphan a row it previously admitted. A rolling window would
+-- reintroduce the same bug from the other side — a unit ageing out of the window turns its
+-- already-written intraday rows into orphans, which merge still cannot delete.
+-- Outside the `scoped` block on purpose: a --full-refresh runs the intraday branch too and
+-- must apply the identical filter.
 dispatch_duids AS (
   SELECT DISTINCT DUID FROM {{ ref('fct_scada') }}
 ),
-scada_cutoff AS (
-  SELECT MAX(SETTLEMENTDATE) AS max_ts, MAX(DATE) AS max_date FROM {{ ref('fct_scada') }}
-),
-today_cutoff AS (
-  SELECT MAX(SETTLEMENTDATE) AS max_ts FROM {{ ref('fct_scada_today') }}
-),
 {% if scoped %}
--- Dates whose stored content could differ from a clean recomputation.
+-- Dates whose stored content could differ from a clean recomputation. Everything older
+-- is settled: its daily file has landed and been folded in, so recomputing it would
+-- reproduce it exactly. Shrinking this window silently reduces what can be repaired.
 rebuild_dates AS (
   -- Never seen before: archive backfill, or a first build catching up.
   SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
   WHERE s.INTERVENTION = 0
     AND s.DATE NOT IN (SELECT DISTINCT t.date FROM {{ this }} t)
   UNION
-  -- Recently settled: the last 6 days of the daily feed.
-  SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
-  CROSS JOIN scada_cutoff c
-  WHERE s.DATE >= c.max_date - INTERVAL '6 days'
+  -- Recently settled: a date first written from the intraday feed is incomplete until
+  -- its daily file lands, which is several days later if the pipeline missed a run — so
+  -- a window, not just the newest daily date.
+  SELECT DISTINCT s.DATE FROM {{ ref('fct_scada') }} s
+  WHERE s.DATE >= (SELECT MAX(DATE) - INTERVAL 6 DAY FROM {{ ref('fct_scada') }})
   UNION
-  -- Still in flux: the intraday feed keeps extending these.
-  SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada_today') }} s
+  -- Still in flux: the intraday feed keeps extending these until their daily file lands.
+  SELECT DISTINCT s.DATE FROM {{ ref('fct_scada_today') }} s
   UNION
-  -- Partially written and never completed (280 matches assert_fct_summary_no_partial_dates).
+  -- Partially written and never completed. A calendar date straddles TWO PUBLIC_DAILY files
+  -- (they roll at 04:00), so a date first computed when only one had landed holds ~48 or
+  -- ~240 intervals; when the second file lands in a LATER run, a 60-file backfill batch has
+  -- moved MAX(DATE) two months past the 6-day window above and the date is never revisited.
+  -- Every batch boundary of a backfill left one (measured 2026-09-17: spark short ~30k rows
+  -- on each of 2019-01-27, 2019-11-23, 2020-01-23 after three incremental runs; the reference
+  -- repo never saw it because it loads the whole archive at once). 280 matches
+  -- assert_fct_summary_no_partial_dates. A date the SOURCE itself still lacks stays in this
+  -- set and recomputes each run until its file lands -- a few dates' scan, nothing inserts.
   SELECT date FROM {{ this }} GROUP BY date HAVING COUNT(DISTINCT time) < 280
 ),
 {% endif %}
 
-daily_rows AS (
+daily_summary AS (
   SELECT
-    s.DATE AS date,
-    CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) AS time,
+    s.DATE as date,
+    CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) as time,
     s.DUID,
-    s.INITIALMW,
-    p.RRP
+    MAX(s.INITIALMW) as mw,
+    MAX(p.RRP) as price
   FROM {{ ref('fct_scada') }} s
+  -- INNER joins: `WHERE p.INTERVENTION = 0` always discarded null-price rows anyway,
+  -- so the old LEFT JOINs were inner joins in disguise — say what we do.
   JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
   JOIN {{ ref('fct_price') }} p
     ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
@@ -75,54 +87,44 @@ daily_rows AS (
     {% if scoped %}
     AND s.DATE IN (SELECT rd.date FROM rebuild_dates rd)
     {% endif %}
-),
+  GROUP BY ALL
 
--- Intraday tail: intervals beyond the daily horizon.
-today_rows AS (
+  UNION ALL
+
+  -- Intraday tail: intervals beyond the daily horizon. Every date here is in
+  -- rebuild_dates by construction, so no extra scoping predicate is needed.
   SELECT
-    s.DATE AS date,
-    CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) AS time,
+    s.DATE as date,
+    CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) as time,
     s.DUID,
-    s.INITIALMW,
-    p.RRP
+    MAX(s.INITIALMW) as mw,
+    MAX(p.RRP) as price
   FROM {{ ref('fct_scada_today') }} s
   JOIN {{ ref('dim_duid') }} d ON s.DUID = d.DUID
   JOIN {{ ref('fct_price_today') }} p
     ON s.SETTLEMENTDATE = p.SETTLEMENTDATE AND d.Region = p.REGIONID
-  -- Only units the daily branch will be able to reproduce once this date settles. A join on
-  -- the DISTINCT set rather than `IN (SELECT DUID ...)`: Polars SQL resolves the bare DUID in
-  -- that subquery against the outer s and d as well, and calls it ambiguous
-  -- (pola-rs/polars#29876).
-  JOIN dispatch_duids dd ON s.DUID = dd.DUID
-  CROSS JOIN scada_cutoff c
   WHERE
     s.INITIALMW <> 0
     AND p.INTERVENTION = 0
-    AND s.SETTLEMENTDATE > c.max_ts
-),
-
-daily_summary AS (
-  SELECT date, time, DUID, MAX(INITIALMW) AS mw, MAX(RRP) AS price
-  FROM daily_rows
-  GROUP BY date, time, DUID
-  UNION ALL
-  SELECT date, time, DUID, MAX(INITIALMW) AS mw, MAX(RRP) AS price
-  FROM today_rows
-  GROUP BY date, time, DUID
+    -- Only units the daily branch will be able to reproduce once this date settles.
+    AND s.DUID IN (SELECT dd.DUID FROM dispatch_duids dd)
+    AND s.SETTLEMENTDATE > (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }})
+  GROUP BY ALL
 ),
 
 batch AS (
-  SELECT
-    ds.date,
-    ds.time,
-    ds.DUID,
-    CAST(ds.mw AS DECIMAL(18, 4)) AS mw,
-    CAST(ds.price AS DECIMAL(18, 4)) AS price,
-    -- Provenance column only (see the iceberg copy).
-    GREATEST(sc.max_ts, COALESCE(tc.max_ts, CAST('1900-01-01 00:00:00' AS TIMESTAMP))) AS cutoff
-  FROM daily_summary ds
-  CROSS JOIN scada_cutoff sc
-  CROSS JOIN today_cutoff tc
+SELECT
+  date,
+  time,
+  DUID,
+  CAST(mw AS DECIMAL(18, 4)) AS mw,
+  CAST(price AS DECIMAL(18, 4)) AS price,
+  -- Provenance column only (see the iceberg copy).
+  (SELECT GREATEST(
+    (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }}),
+    COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMP))
+  )) AS cutoff
+FROM daily_summary
 )
 
 SELECT b.date, b.time, b.DUID, b.mw, b.price, b.cutoff
