@@ -25,7 +25,9 @@
 WITH per_date AS (
   SELECT date, COUNT(DISTINCT time) AS intervals
   FROM {{ ref('fct_summary') }}
-  WHERE date >= current_date() - INTERVAL '12 months'
+  -- dbt.current_timestamp(): Polars SQL has no current_date; dbt-polars renders the run's
+  -- start as a literal.
+  WHERE date >= CAST({{ dbt.current_timestamp() }} AS DATE) - INTERVAL '12 months'
   GROUP BY date
 ),
 latest AS (
