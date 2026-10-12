@@ -298,12 +298,17 @@ def run_lengths(con, at, rows) -> dict:
         cols = _columns(at, rows)
         if not files or not cols:
             return {}
+        # A column-mapped table (dwh, spark) names its columns `col-<guid>` in the FILE; the scan
+        # below reads the file, so it selects the physical name and reports the logical one.
+        phys = ({r[at["path_in_schema"]]: r[at["physical_path_in_schema"]] for r in rows}
+                if "physical_path_in_schema" in at else {})
         path = sorted(files, key=lambda f: (-files[f], f))[0]
         span = min(files[path], ORDERING_SAMPLE_ROWS)
         # `IS DISTINCT FROM` counts NULL == NULL as one run, and the first row's LAG is NULL and
         # so opens a run -- the sum is exactly the number of maximal equal-value spans.
         chg = ",\n           ".join(
-            f'CASE WHEN "{c}" IS DISTINCT FROM LAG("{c}") OVER w THEN 1 ELSE 0 END AS chg_{i}'
+            f'CASE WHEN "{phys.get(c, c)}" IS DISTINCT FROM LAG("{phys.get(c, c)}") OVER w '
+            f'THEN 1 ELSE 0 END AS chg_{i}'
             for i, c in enumerate(cols))
         sel = ", ".join(f"SUM(chg_{i}) AS runs_{i}" for i in range(len(cols)))
         sql = (f"SELECT COUNT(*) AS n, {sel} FROM (\n"

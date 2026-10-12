@@ -8,6 +8,9 @@
 # ducklake's 1.5.5) when both files are installed together.
 requests
 duckdb
+# DuckDB imports it to hand a TIMESTAMPTZ back to Python (download_aemo.py's archive log);
+# it used to arrive with duckrun. "Required module 'pytz' failed to import" without it.
+pytz
 obstore
 # layout.py's Delta-log reads (delta_stats.py).
 deltalake

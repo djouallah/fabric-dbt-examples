@@ -71,6 +71,12 @@ def _logical_names(colmap: dict[str, str]) -> str:
             f"lambda y: CASE y {cases} ELSE y END), ', ') AS path_in_schema)")
 
 
+def _physical_column() -> str:
+    """The footer's own name beside the translated one: anything that READS the files (layout's
+    run-length scan) must select the physical `col-<guid>`, not the logical name."""
+    return ", m.path_in_schema AS physical_path_in_schema"
+
+
 class Tables:
     """One read-only view of `<root>` = an item's `.../Tables`."""
 
@@ -142,7 +148,7 @@ class Tables:
                 continue
             lit = "[" + ", ".join(f"'{_q(f)}'" for f in files) + "]"
             if detailed:
-                parts.append(f"SELECT {pre}, m.*{_logical_names(colmap)} "
+                parts.append(f"SELECT {pre}, m.*{_logical_names(colmap)}{_physical_column()} "
                              f"FROM parquet_metadata({lit}) m")
             else:
                 parts.append(
