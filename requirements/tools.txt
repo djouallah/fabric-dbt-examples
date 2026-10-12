@@ -9,3 +9,5 @@
 requests
 duckdb
 obstore
+# layout.py's Delta-log reads (delta_stats.py).
+deltalake

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """What each engine WROTE: table layout and row-count parity over every engine's output, read
-back through Delta with duckrun.get_stats() and merged into the run record under `layout`. Run
+back through Delta (delta_stats.py, a port of duckrun's get_stats()) and merged into the run record under `layout`. Run
 by the `layout` job of pipeline.yml. Ported from djouallah/direct-lake-parquet-layout's stats.py.
 
 $GITHUB_STEP_SUMMARY gets ONE table -- `headline_table`, one row per engine. Every other table
@@ -20,7 +20,7 @@ virtualised log is listed.
 
 TWO ITEMS, NOT FIVE. All the lakehouse engines share the `dbt` lakehouse and are separated by
 schema (`<engine>_landing` / `<engine>_mart`, or `<DBT_SCHEMA>_<engine>_*`), so one
-`duckrun.connect` over its Tables serves four engines; the Warehouse is the second connection.
+reader over its Tables serves every lakehouse engine; the Warehouse is the second connection.
 The schema rule comes from deploy.mart_schema() so there is no third copy of it.
 
 GLOB, NEVER A BARE `get_stats()`. A bare call sweeps every schema in the item -- each
@@ -36,7 +36,7 @@ RUN LENGTHS in physical row order (was the writer's sort real). Spark's per-file
 Delta tag is read off the log as the fourth. The source repo's README explains why each of
 those is worth a number; here they are simply recorded.
 
-HEAVY IMPORTS ARE LAZY. duckrun, provision (which reads FABRIC_WORKSPACE_ID at import) and
+HEAVY IMPORTS ARE LAZY. delta_stats, provision (which reads FABRIC_WORKSPACE_ID at import) and
 obstore are imported inside the functions that need them, so the pure functions below import
 offline for tests_py/test_layout.py -- the same rule measure_cu.py follows.
 """
@@ -130,19 +130,12 @@ def schema_prefix(engine: str) -> str:
 # --------------------------------------------------------------------------------- readers
 
 def reader(guid: str, name: str):
-    """A read-only duckrun session over one item's Tables. The OneLake token comes from
-    duckrun's own OIDC exchange on the runner, exactly as in the `land` job."""
-    import duckrun
+    """A read-only view of one item's Tables (delta_stats.py: the Delta log through deltalake,
+    the footers through DuckDB, one storage token from tokens.py)."""
+    import delta_stats
     import provision
 
-    con = duckrun.connect(provision.abfss(guid, "Tables"), read_only=True, name=name)
-    transport = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE")
-    if transport:
-        try:
-            con.con.sql(f"SET GLOBAL azure_transport_option_type='{transport}'")
-        except Exception:  # noqa: BLE001
-            pass
-    return con
+    return delta_stats.Tables(provision.abfss(guid, "Tables"), name=name)
 
 
 def stats_for(con, prefix: str) -> dict:
@@ -332,8 +325,8 @@ def run_lengths(con, at, rows) -> dict:
 def _vorder_from_log(actions, live_files) -> dict:
     """`{tagged, files, unknown}` -- how many LIVE parquet files carry Fabric's `VORDER` add tag.
 
-    Spark records V-Order per file as an `add.tags` entry, which duckrun's `vorder` column (a
-    table PROPERTY nobody sets) cannot see -- so this reads the commit JSON itself. Pure, so
+    Spark records V-Order per file as an `add.tags` entry, which get_stats()'s `vorder` column
+    (a table PROPERTY nobody sets) cannot see -- so this reads the commit JSON itself. Pure, so
     the parsing is testable without a store. Last `add` per path wins and REMOVES ARE NOT
     REPLAYED: the live set comes from the file list `mart_chunks` already read, tombstones
     excluded. Matched on BASENAME (`file_name` is a full URI, `add.path` table-relative and
@@ -354,18 +347,18 @@ def _vorder_from_log(actions, live_files) -> dict:
 
 
 def vorder_tags(con, guid: str, schema: str, table: str, live_files) -> dict:
-    """`_vorder_from_log` over the table's `_delta_log/*.json`, read with obstore through the
-    session's own storage options. Commit files are zero-padded, so a lexicographic sort IS
+    """`_vorder_from_log` over the table's `_delta_log/*.json`, read with obstore (onelake.py). Commit files are zero-padded, so a lexicographic sort IS
     commit order. ONLY MEANINGFUL FOR A SPARK-WRITTEN TABLE: the tag is the Fabric Spark
     writer's marker; the Warehouse V-Orders by default and stamps none, delta-rs and DuckDB
     never do. Best-effort: `{}` on anything at all."""
     try:
         import obstore
+
+        import onelake
         import provision
-        from dbt.adapters.duckrun import objectstore, secret
 
         base = f"{provision.abfss(guid, 'Tables')}/{schema}/{table}/_delta_log"
-        store = objectstore.build_store(base, secret.refreshed(con.storage_options))
+        store = onelake.store(base)
         keys = sorted(o["path"].rsplit("/", 1)[-1]
                       for batch in obstore.list(store) for o in batch
                       if str(o["path"]).endswith(".json"))
