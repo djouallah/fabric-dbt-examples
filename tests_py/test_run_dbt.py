@@ -93,8 +93,8 @@ def test_the_fingerprint_is_last_and_only_after_a_green_build():
 def test_the_fingerprint_can_be_skipped_but_is_on_by_default():
     """Default-OFF would mean a caller that forgets the flag publishes no fingerprint at all,
     which is the silent-green case (parity.py compare just reports it has fewer than two).
-    Default-ON costs one redundant run-operation at worst, and lets remote_dbt.py and the demo
-    notebook keep calling this with nothing but an engine name."""
+    Default-ON costs one redundant run-operation at worst, and lets the deployed notebook call
+    this with nothing but an engine name."""
     src = source()
     assert '"--no-fingerprint" not in argv' in src, (
         "the flag is opt-IN; it must be opt-OUT so the Fabric path needs no flag to fingerprint"
@@ -105,8 +105,7 @@ def test_the_driver_does_not_fight_the_environment_it_is_given():
     """This script used to delete AZURE_TRANSPORT_OPTION_TYPE and CURL_CA_INFO on arrival --
     correct in a notebook, and the exact opposite on the GitHub runner, where pipeline.yml sets
     both on purpose and DuckDB fails the OneLake TLS handshake without them. One script runs in
-    both places now, so it takes the environment as given; remote_dbt.py's FORWARD allowlist is
-    what keeps the runner's settings out of Fabric (tests_py/test_local_runner.py)."""
+    both places now, so it takes the environment as given; the Fabric notebook never sets them."""
     src = source()
     assert 'os.environ.setdefault(' in src and "DUCKDB_TEMP_DIR" in src, (
         "DUCKDB_TEMP_DIR must be a setdefault: the runner sets it at job level, and in Fabric "

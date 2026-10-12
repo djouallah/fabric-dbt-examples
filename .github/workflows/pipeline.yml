@@ -146,6 +146,7 @@ jobs:
       daily_download_limit: ${{ inputs.daily_download_limit }}
       # The dispatch inputs, as `record.py init` writes them into the run record. Blank = absent.
       RUNIN_ENGINES: ${{ inputs.engines }}
+      RUNIN_MODE: ${{ inputs.mode }}
       RUNIN_DBT_SCHEMA: ${{ inputs.dbt_schema }}
       RUNIN_PROCESS_LIMIT: ${{ inputs.process_limit }}
       RUNIN_SPARK_RESOURCE_PROFILE: ${{ inputs.spark_resource_profile }}

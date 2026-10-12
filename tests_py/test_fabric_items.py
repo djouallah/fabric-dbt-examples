@@ -57,7 +57,7 @@ def test_notebook_targets_a_real_engine_from_the_library():
     assert "dbt_target = '" not in src and 'dbt_target = "' not in src, "target must come from the library"
     default = next(v["value"] for v in json.loads(VARIABLES.read_text(encoding="utf-8"))["variables"]
                    if v["name"] == "dbt_target")
-    assert default in ("duckrun", "iceberg", "ducklake"), "remote_dbt.ENGINES: the DuckDB-family legs"
+    assert default in ("duckrun", "iceberg", "ducklake", "polars"), "the notebook runs the in-process engines"
 
 
 def test_pipeline_escalates_vcores_through_pipelinecore():

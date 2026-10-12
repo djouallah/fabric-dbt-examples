@@ -32,7 +32,7 @@ def _doc(p):
 
 
 def test_unset_run_record_is_a_no_op():
-    """provision.py and remote_dbt.py must stay runnable by hand -- recording is opt-in."""
+    """provision.py and fabric_run.py must stay runnable by hand -- recording is opt-in."""
     assert record.merge({"items": {"A": {}}}) is None
     assert record.item("A", "data", "Lakehouse", "dbt") is None
     assert record.leg("duckrun", started="T0") is None
@@ -159,7 +159,7 @@ def test_init_reads_the_dispatch_inputs_and_skips_blanks(tmp_path, monkeypatch):
 
 def test_compute_items_accumulate_within_a_leg(tmp_path, monkeypatch):
     """ducklake's compute is TWO items written by two scripts in one job -- the catalog SQL DB
-    from provision.py, the notebook from remote_dbt.py -- and the merge replaces lists, so
+    from provision.py, the notebook from fabric_run.py -- and the merge replaces lists, so
     `leg()` has to union them itself. Upper-cased, de-duplicated, order kept."""
     p = tmp_path / "frag.json"
     monkeypatch.setenv("RUN_RECORD", str(p))

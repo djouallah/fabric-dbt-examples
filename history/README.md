@@ -32,14 +32,14 @@ hours they ran, and the ledger holds what those items cost in those hours.
 ```
 
 - `role` is a closed vocabulary: `landing` · `data` (the shared `dbt` lakehouse) · `warehouse`
-  · `catalog` (ducklake's SQL DB) · `folder` · `compute` (a throwaway notebook).
+  · `catalog` (ducklake's SQL DB) · `folder` · `compute` (the deployed `run` notebook, in the Fabric mode).
 - **`legs.<engine>.compute` are the items whose compute operations belong to that leg**, and
   `started` / `finished` bracket build + tests + fingerprint. Measured against the live model
   on 2026-09-17 (workspace `sqlengines`, capacity `CAT_Premium_Europe`):
 
   | engine | `compute` | operation, as the metrics app names it |
   |---|---|---|
-  | duckrun, iceberg | the throwaway notebook `dbt-<engine>-<run id>` | `Jupyter Notebook Scheduled Run` |
+  | duckrun, iceberg, polars | the deployed `run` notebook, in the Fabric mode only | `Jupyter Notebook Scheduled Run` |
   | ducklake | that notebook **and** `dbt_ducklake_meta` (the catalog SQL DB — `Sql Usage`, 19.5k CU in three days, nothing else queries it) | `Jupyter Notebook Scheduled Run`, `Sql Usage` |
   | dwh | `dbt_dwh` (Warehouse) | `Warehouse Query` |
   | spark | `dbt` (the shared Lakehouse — a Livy session bills against the lakehouse it was opened on, and only the spark leg opens one there) | `High Concurrency Session Livy Run` |
@@ -69,16 +69,14 @@ hours they ran, and the ledger holds what those items cost in those hours.
                  "window": ["...Z", "...Z"], "partial": true}}}}}
 ```
 
-**A leg dispatched with `local_runner` reads three ways, not two.** duckrun's and iceberg's only
-compute GUID is the Fabric notebook, written by `remote_dbt.py`; build them on the GitHub runner
-and there is no GUID, so `measure_cu.attribute()` skips the leg and no row is ever made for that
-(run, engine) — **ABSENT, not zero**. That is the truth — GitHub compute is not Fabric capacity —
-but it is indistinguishable from a lost measurement, so check the run record's
-`inputs.local_runner` before reading a gap as a bug. **ducklake is the exception: it is PRESENT
-with `Sql Usage` alone.** Its catalog SQL DB is a compute item `provision.py` records whether the
-leg runs on Fabric or on the runner, so a local ducklake row has the catalog's usage and no
-`Jupyter Notebook Scheduled Run` beside it. Read that as "built on the runner", not as a lost
-notebook measurement.
+**A local leg has no Fabric compute of its own.** In the local mode (`pipeline.yml`'s
+default) duckrun, iceberg and polars build on the GitHub runner, so there is no compute GUID and
+`measure_cu.attribute()` makes no row for that (run, engine): **ABSENT, not zero**. That is the
+truth — GitHub compute is not Fabric capacity — but it is indistinguishable from a lost
+measurement, so check the run record's `inputs.mode` before reading a gap as a bug. **ducklake is
+the exception: it is PRESENT with `Sql Usage` alone** — its catalog SQL DB is a compute item
+`provision.py` records in both modes. In the Fabric mode each in-process leg's compute is the
+deployed `run` notebook (`fabric_run.py` records it).
 
 **Compute only, on purpose.** Every `OneLake …` operation is a storage transaction, and on a
 lakehouse shared by five engines the storage in any window is everybody's — there is nothing
@@ -121,7 +119,7 @@ you want settled sooner: dispatch `Capacity units` by hand (`gh workflow run "Ca
 | `CU_METRICS_WORKSPACE_ID` / `CU_METRICS_MODEL_ID` | secret | the Capacity Metrics app's workspace and semantic model |
 | `CU_CAPACITY_ID` | secret | pin it; unpinned costs an extra query plus a full read per capacity |
 | `CU_WORKSPACE_FILTER` | = `FABRIC_WORKSPACE_ID` | the only row filter, a column of the fact table itself |
-| `PBI_TOKEN` | optional | by-hand escape hatch; CI lets duckrun mint it from the OIDC login |
+| `PBI_TOKEN` | optional | by-hand escape hatch; CI mints it with `az` after `azure/login` (tokens.py) |
 | `CU_SINCE` | optional | override the floor, **in the model's clock** |
 | `CU_MODEL_OFFSET_HOURS` | `10` | the app's own UTC offset; a wrong value reads as "no activity", not as an error |
 | `CU_RETENTION_DAYS` / `CU_FALLBACK_HOURS` | `14` / `2` | |

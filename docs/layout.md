@@ -21,7 +21,9 @@ download_aemo.py                           one downloader, one landing zone, pla
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/check_catalog_stats.py     proves the published page is not empty
-.github/scripts/remote_dbt.py              runs a DuckDB leg inside Fabric (8 vCores)
+.github/scripts/fabric_run.py              runs one engine in Fabric (the deployed pipeline)
+.github/scripts/tokens.py                  every script's token: notebookutils in Fabric, az elsewhere
+.github/scripts/onelake.py                 OneLake (or a folder) for the scripts: DuckDB + obstore
 .github/scripts/record.py                  the run record: items by GUID, each leg's window
 .github/scripts/layout.py                  what each engine wrote: files, row groups, encodings, order
 .github/scripts/measure_cu.py              what each engine cost: capacity units per run and engine

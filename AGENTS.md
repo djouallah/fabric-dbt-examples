@@ -15,6 +15,37 @@ this replaced did, and it is why three correctness fixes ended up living in exac
 each. If something genuinely cannot be expressed on one engine, say so in the model and in
 the README table; do not quietly let the engines diverge.
 
+## Two ways to run — and only two
+
+- **local**: `pipeline.yml` with `mode: local` (the default) builds every engine ON THE GitHub
+  RUNNER — `run_dbt.py` in-process for duckrun / iceberg / ducklake / polars, a `dbt`
+  subprocess for dwh / spark (dbt is only a client of the Warehouse / Livy there). A laptop is
+  the same thing. `process_limit` defaults to 50 because the in-process engines fold their
+  batch in the runner's 7 GB: at 1000 the DuckDB legs were OOM-killed mid-`fct_scada`, and
+  polars aborted the same model on `raise POLARS_OOC_DISK_BUDGET_MB` (run 38194802045). A
+  backlog converges over runs.
+- **fabric**: `mode: fabric` deploys with **fabric-cicd** (`deploy.py`: the repo copy into the
+  `dbt` lakehouse's `Files/dbt`, the `run` notebook, `run_pipeline`, the `deploy_config`
+  library) and then runs the deployed pipeline once per in-process engine
+  (`.github/scripts/fabric_run.py`: start the job instance with `engine`, `run_id`,
+  `land=False`, poll, copy the notebook's fingerprint from `Files/dbt_runs/<run_id>/` to
+  `history/parity/`). dwh and spark build from the runner in both modes.
+
+Nothing else. There used to be a third way — `remote_dbt.py` launching dbt in a throwaway
+notebook through duckrun's `run_python`, with a `FORWARD` allowlist, `SETUP` token hooks, a
+`local_runner` toggle and `fabric_cores` — and it is gone; `tests_py/test_modes.py` fails if
+any of it comes back.
+
+**duckrun is ONLY the `duckrun` target's dbt adapter.** The scripts get tokens from
+`.github/scripts/tokens.py` (notebookutils inside Fabric, `az` everywhere else — so EVERY job
+that touches Azure has `azure/login`), read and write OneLake through `onelake.py` (DuckDB with
+an azure `access_token` secret, obstore, a raw DFS DELETE), read table layout through
+`delta_stats.py` (a port of duckrun's `get_stats()`), and deploy through fabric-cicd. Their
+dependencies are `requirements/tools.txt`. `tests_py/test_duckrun_is_only_an_adapter.py` pins
+it: duckrun used as a toolkit is what broke polars (duckrun pins `deltalake==1.5.0`, Polars
+excludes 1.5.*: pip silently resolved duckrun 0.3.3, which has no `duckrun` module —
+djouallah/duckrun#83).
+
 ## Verify before you spend anything
 
 ```bash
@@ -93,13 +124,12 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   private copy of the CSVs and `parity.py` was grading engines on different inputs. Never
   re-emit `FILES_PATH` to move an engine's data somewhere; give it its own key, the way
   `DUCKLAKE_DATA_PATH` does.
-- **Only `duckrun` is exempt from `azure/login`** in `pipeline.yml`'s build legs. It mints its own tokens
-  from the OIDC assertion; every other leg shells out to `az` for an audience duckrun cannot
-  mint, so exempting one of them kills it before it provisions anything. `iceberg` needs the
-  login for `provision.py` and for the `compact` job's OneLake token, not for the adapter — its
-  in-notebook `ONELAKE_TOKEN` comes from `notebookutils`. The `deploy`
-  job in `pipeline.yml` is duckrun end to end (storage, Fabric and Power BI tokens all from
-  the assertion), so it has no login step either.
+- **Every job that touches Azure has `azure/login`, duckrun's leg included.** The scripts'
+  tokens come from `az` through `tokens.py`; the duckrun adapter's own token chain finds the
+  CLI login too. Inside Fabric `tokens.py` uses `notebookutils`, and `provision.py` emits the
+  notebook's `ONELAKE_TOKEN` / `DBT_ENV_SECRET_SQL_TOKEN` — but only when `GITHUB_ACTIONS` is
+  unset: on CI its stdout goes to `$GITHUB_ENV` unmasked, so `pipeline.yml` mints those with
+  `::add-mask::`.
 
 - **CREDENTIAL VENDING COVERS THE `Tables/` SECTION ONLY. `Files/` STILL NEEDS A REAL SECRET.**
   The iceberg leg carries BOTH: the `token:` on the ATTACH authorises the REST catalog and the
@@ -110,9 +140,9 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   what would turn it off, and it is not wanted.
   **A green in-Fabric run is not evidence the credentials are right**, because a notebook's own
   identity already authorises OneLake: run 35424929721 built all eight models with no secret at
-  all, and the same profile on a runner (`local_runner`, 35427154840) died on the first model with
-  `Unauthorized` reading `Files/csv_raw_archive_log.parquet`. That asymmetry is why `local_runner`
-  exists.
+  all, and the same profile on a runner (35427154840) died on the first model with
+  `Unauthorized` reading `Files/csv_raw_archive_log.parquet`. The local mode is what proves a
+  profile's own credentials.
 - **OTHERWISE THE LEG IS THAT SOURCE REPO'S PROFILE.** `threads: 2` and a hand-pinned duckdb
   come straight from it. **Port from that repo rather than deriving the leg from ducklake plus
   an idea:** three deviations shipped together on 2026-09-18 (vending, a floating
@@ -183,39 +213,17 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   rewritten. Prefer it to `merge` wherever the model only ever adds rows; a delta-rs merge
   scales with the target's partition span, not the batch, which is what OOM-kills big facts.
   `partition_by` + `incremental_predicates` on `month_key` is what makes the probe prune.
-- **duckrun, ducklake and iceberg run dbt INSIDE Fabric** (`.github/scripts/remote_dbt.py` →
-  duckrun's `run_python`, 8 vCores; `run_dbt.py` is what runs there, invoking dbt in-process via
-  `dbtRunner`). Do not move them back onto the runner as the steady state: DuckDB folds the
-  archive in memory and the 7 GB hosted runner was shut down mid-`fct_scada` twice in one day.
-  **The one sanctioned exception is `pipeline.yml`'s `local_runner` input**, off by default: it
-  builds ALL THREE on the runner so a leg's own credentials can be proven on `az`-minted tokens,
-  which an in-Fabric run cannot do because the notebook injects them itself. Verification only,
-  and it wants a small `process_limit`.
-  **Both places run the same `.github/scripts/run_dbt.py`** — build, the 40613 resume loop, a
+- **Both modes run the same `.github/scripts/run_dbt.py`** — build, the 40613 resume loop, a
   `dbt retry` guarded on `run_results.json` existing, then the fingerprint — which is what makes
-  a local leg and a Fabric leg one sequence rather than two implementations that agree by
-  inspection. That is also what let ducklake join the toggle on 2026-09-19: it used to be carved
-  out because only the in-Fabric script had the 40613 loop while the runner ran a bare
-  `dbt build || dbt retry`. Two things follow. (1) `run_dbt.py` no longer pops
-  `AZURE_TRANSPORT_OPTION_TYPE` / `CURL_CA_INFO` out of its environment — on the runner those
-  are set ON PURPOSE — so `remote_dbt.py`'s `FORWARD` allowlist is now the ONLY thing keeping
-  them out of Fabric. (2) The runner step passes `--no-fingerprint`, because on that path the
-  fingerprint is a step of its own; in the notebook it must be in the same process, since its
-  JSON is lifted back out of the streamed log.
+  a local leg and a Fabric run one sequence rather than two implementations that agree by
+  inspection. On the runner it gets `--no-fingerprint` (the fingerprint is a step every leg
+  shares); in the notebook `--fingerprint-out <lakehouse path>`, which is how CI reads a Fabric
+  run's numbers back. `run_dbt.py` pops nothing out of its environment:
+  `AZURE_TRANSPORT_OPTION_TYPE` / `CURL_CA_INFO` are set ON PURPOSE on the runner (DuckDB fails
+  the OneLake TLS handshake without them) and never in the notebook.
   **ducklake needs two runner-minted tokens**: OneLake storage, and a `database.windows.net`
-  bearer for its catalog SQL DB. Both are minted in `pipeline.yml` steps rather than by
-  `provision.py`, because that script's stdout is redirected into `$GITHUB_ENV` and a token
-  emitted there never passes through `::add-mask::` — which is exactly why `provision.py` still
-  refuses to emit `DBT_ENV_SECRET_SQL_TOKEN` under `GITHUB_ACTIONS`.
-  `local` is still NOT a value of `fabric_cores`: that is a SIZE and this is a PLACE, and
-  `remote_dbt.py` does `int()` on it on every run with the toggle OFF.
-  **In `cu.json` a local leg is three-way, not two:** duckrun and iceberg write no notebook GUID
-  so `measure_cu.py` skips them and they are ABSENT rather than zero, while ducklake is PRESENT
-  with `Sql Usage` alone — `provision.py` records its catalog SQL DB as a compute item either
-  way. `RUNIN_LOCAL_RUNNER` in the run record is what says why.
-  In Fabric the tokens are minted by `notebookutils` (the `setup` hook); only the `FORWARD`
-  allowlist of config travels, never anything token-shaped. `DATA_LAKEHOUSE_ID` from
-  provision.py is what run_python needs.
+  bearer for its catalog SQL DB, both minted with the mask in `pipeline.yml` (see the
+  `azure/login` bullet for why not in `provision.py`).
 - **ducklake's catalog SQL DB auto-pauses, and the first connection after that FAILS.** A
   Fabric SQL DB is serverless: idle long enough and it pauses, then the next connection gets
   SQL error 40613 ("Database ... is not currently available. Please retry the connection
@@ -405,13 +413,10 @@ probe stays as the place to try an adapter question cheaply.
   - no `generate_series` (pola-rs/polars#29879); no options on `read_csv()` (pola-rs/polars#29880).
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`). Headerless reads name
   columns from `column_0` on Polars 2 -- irrelevant here, the padded `schema` names them.
-- **It builds ON THE RUNNER, not in Fabric.** `pipeline.yml`'s `REMOTE` list leaves it out:
-  launching a notebook needs duckrun on the runner, and duckrun (pins `deltalake==1.5.0`)
-  cannot share an environment with dbt-polars (Polars excludes `deltalake 1.5.*`) — pip
-  silently resolves duckrun 0.3.3, which has no `duckrun` module (djouallah/duckrun#83). So
-  `requirements/polars.txt` carries no duckrun, and the leg is subject to the 7 GB runner the
-  DuckDB legs were moved off; watch its memory on a large `process_limit`. `remote_dbt.py`
-  keeps a `polars` entry for when the clash is gone.
+- **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any
+  more, so the deltalake clash (djouallah/duckrun#83) cannot reach it. On the runner, a large
+  `process_limit` exhausts Polars' out-of-core disk budget in `fct_scada` before it exhausts
+  memory (`raise POLARS_OOC_DISK_BUDGET_MB`).
 - **Not compacted.** `compact_iceberg.py` is iceberg's alone.
 
 ## Why iceberg is not on dbt OSS 2
@@ -489,20 +494,24 @@ and is not here.
   The three model patch files (`_staging.yml`, `_dimensions.yml`, `_marts.yml`) sit at
   `dbt1/models/aemo/`, one level ABOVE the engine folders, so ONE patch documents and tests
   whichever tree is enabled — moving them to the root of `models/` loses the gateable segment.
-- `fabric_items/` vs `semantic_model/` being separate directories. duckrun's `deploy()`
-  takes no exclude filter, and `_scan_item_folders` validates every item folder before
-  deploying any, so one stray folder makes the whole deploy ship nothing. The model is
-  deployed as a FILE, once per engine, as `aemo_<engine>`.
-- **The demo notebook (`fabric_items/run.Notebook`) runs the CI scripts** — `provision.py`,
+- `fabric_items/` vs `semantic_model/` being separate directories. fabric-cicd publishes
+  `fabric_items/` as it stands (run items only); the model is published once per engine, as
+  `aemo_<engine>`, from a staged copy whose `model.bim` has its schema and its OneLake GUIDs
+  bound in Python (`deploy.bind_model`). `fabric_items/parameter.yml` is fabric-cicd's
+  find/replace for the pipeline's authoring workspace GUID; the notebookId beside it is the
+  notebook's logicalId, which fabric-cicd resolves itself. fabric-cicd publishes at the
+  workspace root, and `deploy.py` moves the items into the `dbt` folder afterwards.
+- **The `run` notebook (`fabric_items/run.Notebook`) runs the CI scripts** — `provision.py`,
   `download_aemo.py`, `run_dbt.py` — from the repo copy `deploy.py` puts in the `dbt`
-  lakehouse's `Files/dbt`, on the engine the `deploy_config` Variable Library names. Never
-  fork dbt logic into it; change the scripts and redeploy. `tests_py/test_fabric_items.py`
-  pins the notebook's variables against `variables.json`. The pipeline's `pipelinecore`
-  parameter is LIVE: the notebook's `%%configure` cell takes its vCores from it (2, then 8 on
-  the retry activity) — it was once deleted here as "dead" because that cell had been lost.
-  The notebook mounts the lakehouse and copies `Files/dbt` to the work disk; it does not
-  `fs.cp`. Deploy is a `deploy` input on `pipeline.yml`, after the build, the way the source
-  repo does it — not a separate workflow.
+  lakehouse's `Files/dbt`, for the engine the pipeline passes (`engine`, else the
+  `deploy_config` library's `dbt_target`). Never fork dbt logic into it; change the scripts and
+  redeploy. `tests_py/test_fabric_items.py` pins its variables against `variables.json` and its
+  parameters against the pipeline's. The pipeline's `pipelinecore` parameter is LIVE: the
+  notebook's `%%configure` cell takes its vCores from it (2, then 8 on the retry activity) — it
+  was once deleted here as "dead" because that cell had been lost. The notebook mounts the
+  lakehouse and copies `Files/dbt` to the work disk; it does not `fs.cp`. `land=False` when CI
+  starts it: CI landed once already, and two runs landing at once race on the archive log
+  (the pipeline's concurrency is 1 for the same reason).
 - `pipeline.yml` being manual. It commits to `history/parity/`, so a push trigger makes the
   commit start the next run.
 - Do not use `NotebookEdit` on `fabric_items/run.Notebook/notebook-content.ipynb` — keep
@@ -534,9 +543,11 @@ Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`
   The one list that accumulates is `legs.<engine>.compute`, and `record.leg()` does the union
   itself: ducklake's compute is two items written by two scripts in one job — the catalog SQL
   DB (`Sql Usage`, measured 19.5k CU in three days, nothing else queries it) from
-  `provision.py` and the notebook from `remote_dbt.py`.
-- **`RUN_RECORD` unset is a silent no-op** — `provision.py` and `remote_dbt.py` must stay
-  runnable by hand and from the demo notebook. The cost: a job that forgets it produces a
+  `provision.py` and, in the Fabric mode, the `run` notebook from `fabric_run.py`.
+  A local leg's compute is the runner, which Fabric does not bill: duckrun / iceberg / polars
+  are ABSENT from `cu.json` in local mode, and ducklake shows its `Sql Usage` alone.
+- **`RUN_RECORD` unset is a silent no-op** — `provision.py` and `fabric_run.py` must stay
+  runnable by hand and from the deployed notebook. The cost: a job that forgets it produces a
   record missing those items with nothing red. Every fragment upload is
   `if-no-files-found: ignore`; `record.py finish` logs the item table it assembled.
 - **`runner.temp` is not a named value at job level.** `RUN_RECORD` is set from a step into
