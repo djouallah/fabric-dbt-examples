@@ -115,7 +115,7 @@ jobs:
   # dbt lakehouse up front, so the parallel legs all find them already there instead of five
   # create-if-missing calls colliding on the same item name.
   #
-  # No azure/login: duckrun mints its own tokens from the GitHub OIDC assertion.
+  # Azure login like every job that touches Azure: tokens come from `az` (tokens.py).
   land:
     name: land AEMO (once)
     needs: plan
@@ -163,7 +163,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/*.txt
-      - run: pip install -r requirements/duckrun.txt
+      - run: pip install -r requirements/duckrun.txt -r requirements/tools.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       # The run record starts here -- run id, sha, inputs -- and provision.py adds the shared
       # items' GUIDs to the same fragment. record.py; the record job merges every job's.
       # A step, not job env: the `runner` context is not available at job level.
@@ -283,15 +288,12 @@ jobs:
         # duckrun cannot share an environment (duckrun pins dbt-core<2 and lays a 1.x `dbt`
         # script over v2's); dbt-duckdb and duckrun share one happily.
         # The compact job below still installs its own `--pre duckdb` and nothing else.
-        run: pip install -r "requirements/${ENGINE}.txt"
+        run: pip install -r "requirements/${ENGINE}.txt" -r requirements/tools.txt
 
       # ---- auth -------------------------------------------------------------------
-      # duckrun — and ONLY duckrun — mints every token it needs (OneLake storage, Fabric
-      # control plane) by exchanging a fresh GitHub OIDC assertion, so its leg needs no login
-      # step. Every other engine gets an Azure session: provision.py falls back to `az` for
-      # any audience duckrun cannot mint, and the dwh leg captures its Warehouse token below.
+      # Every leg, duckrun included: the scripts' tokens come from `az` (tokens.py), and the
+      # duckrun adapter's own token chain finds the CLI login too.
       - name: Azure login
-        if: matrix.engine != 'duckrun'
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -515,8 +517,7 @@ jobs:
   #
   # Best-effort by construction (continue-on-error here, try/except per engine inside): a
   # table that cannot be read is "not measured", never a red run, and the record job below
-  # still runs and still commits. No azure/login: duckrun mints the OneLake and Fabric tokens
-  # from the OIDC assertion, as in `land`. The curl transport is for DuckDB reading parquet
+  # still runs and still commits. Azure login like `land`. The curl transport is for DuckDB reading parquet
   # off Fabric, as in build.yml.
   layout:
     name: layout read back
@@ -550,8 +551,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/duckrun.txt
-      - run: pip install -r requirements/duckrun.txt
+          cache-dependency-path: requirements/*.txt
+      - run: pip install -r requirements/duckrun.txt -r requirements/tools.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       - name: Read the layout back
         run: |
           echo "RUN_RECORD=$RUNNER_TEMP/record/record-30-layout.json" >> "$GITHUB_ENV"
@@ -665,8 +671,7 @@ jobs:
   # THE IN-FABRIC DEMO, deployed AFTER the build so the Direct Lake models find their tables
   # (a model reframes on deploy). Off by default: orchestration is GitHub Actions; the notebook
   # and pipeline are a demo of in-Fabric scheduling, and redeploying them every run is churn.
-  # No azure/login: duckrun mints the storage, Fabric and Power BI tokens from the OIDC
-  # assertion, exactly as on the duckrun leg.
+  # Azure login: the storage, Fabric and Power BI tokens come from `az` (tokens.py).
   deploy:
     name: deploy demo (optional)
     needs: [plan, build]
@@ -687,8 +692,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/duckrun.txt
-      # duckrun is the whole backend; provision.py's `requests` comes with it.
-      - run: pip install -r requirements/duckrun.txt
+          cache-dependency-path: requirements/*.txt
+      - run: pip install -r requirements/duckrun.txt -r requirements/tools.txt
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       - name: Deploy (${{ inputs.deploy }})
         run: python deploy.py

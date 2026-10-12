@@ -13,8 +13,8 @@ lakehouse now and are separated by SCHEMA instead (see macros/generate_schema_na
 
     <FOLDER>/
       dbt_landing        Lakehouse  the CSVs download_aemo.py lands. Written ONCE, read by all five.
-      dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* schemas (Tables/), and
-                                    the duckrun_remote/ round-trip files of the Fabric-side runs
+      dbt                Lakehouse  duckrun_* iceberg_* ducklake_* spark_* polars_* schemas
+                                    (Tables/), and the repo copy deploy.py puts in Files/dbt
       dbt_dwh            Warehouse  dwh_landing, dwh_mart
       dbt_ducklake_meta  SQL DB     DuckLake catalog metadata only, no data
 
@@ -51,6 +51,7 @@ import time
 import requests
 
 import record
+import tokens
 
 API = "https://api.fabric.microsoft.com/v1"
 WS = os.environ["FABRIC_WORKSPACE_ID"]
@@ -78,30 +79,8 @@ FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 
 
 def token(resource: str = FABRIC_RESOURCE) -> str:
-    """A bearer token for `resource`. duckrun mints the Fabric control-plane one from the GitHub
-    OIDC assertion with no login step; any OTHER audience (the SQL DB token for ducklake) goes
-    through `az`, because duckrun's public helpers only mint storage and Fabric tokens -- this
-    used to hand a Fabric-API token to every caller regardless of the resource asked for."""
-    if resource == FABRIC_RESOURCE:
-        try:
-            import duckrun.auth
-
-            return duckrun.auth.get_fabric_token()
-        except Exception:
-            pass
-    # Inside a Fabric notebook (the demo notebook runs this script there) notebookutils mints
-    # any audience, and `az` does not exist.
-    try:
-        import notebookutils  # type: ignore
-
-        return notebookutils.credentials.getToken(resource)
-    except ImportError:
-        pass
-    return subprocess.run(
-        ["az", "account", "get-access-token", "--resource", resource,
-         "--query", "accessToken", "-o", "tsv"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    """A bearer token for `resource` -- tokens.py: notebookutils in Fabric, `az` elsewhere."""
+    return tokens.get_token(resource)
 
 
 def req(method: str, path: str, **kw):
@@ -251,8 +230,7 @@ def main() -> int:
     data_id = ensure("lakehouses", DATA_LAKEHOUSE,
                      {"creationPayload": {"enableSchemas": True}}, folder_id)
     record.item(data_id, "data", "Lakehouse", DATA_LAKEHOUSE)
-    # remote_dbt.py needs the item (not a path) for run_python's result round-trip: the
-    # workspace holds many lakehouses, so duckrun cannot infer one.
+    # The item, not a path: the compact job and fabric mode address the lakehouse by GUID.
     emit("DATA_LAKEHOUSE_ID", data_id)
 
     if engine in LAKEHOUSE_ENGINES:
@@ -346,8 +324,8 @@ def main() -> int:
         # SCRIPT'S STDOUT IS REDIRECTED INTO $GITHUB_ENV, so anything emitted here never passes
         # through ::add-mask:: and would sit unmasked in the job's environment. pipeline.yml's
         # "Mint the DuckLake catalog token" step mints the same audience with the mask. Off CI
-        # (a laptop, the in-Fabric demo notebook) this is the only thing that provides it, and
-        # in Fabric remote_dbt.py's setup hook mints it from notebookutils.
+        # (a laptop, the deployed `run` notebook) this is the only thing that provides it:
+        # tokens.py mints it with `az` there, or with notebookutils inside Fabric.
         if not os.environ.get("GITHUB_ACTIONS"):
             try:
                 emit("DBT_ENV_SECRET_SQL_TOKEN", token("https://database.windows.net/"))

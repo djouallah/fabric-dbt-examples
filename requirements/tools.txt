@@ -1,0 +1,6 @@
+# The repo's SCRIPTS (provision.py, download_aemo.py, deploy.py, layout.py, measure_cu.py),
+# not any engine. Installed next to an engine's requirements wherever a job runs a script.
+#
+# These used to arrive as duckrun's dependencies, because duckrun was also the scripts'
+# Fabric toolkit. duckrun is now ONLY the dbt adapter (requirements/duckrun.txt).
+requests

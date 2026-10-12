@@ -45,8 +45,8 @@ A run measured minutes after it finished is a LOWER BOUND (~6 min ingestion lag,
 of smoothing); the daily read raises it.
 
 Env in: `CU_METRICS_WORKSPACE_ID`, `CU_METRICS_MODEL_ID`, `CU_CAPACITY_ID`, `CU_WORKSPACE_FILTER`.
-`PBI_TOKEN` is optional -- unset, duckrun mints the Power BI audience from the same OIDC
-exchange deploy.py's model refresh uses. Optional: `CU_SINCE` (override the floor, in the
+`PBI_TOKEN` is optional -- unset, tokens.py mints the Power BI audience (`az`, after the
+job's azure/login). Optional: `CU_SINCE` (override the floor, in the
 MODEL's clock), `CU_MODEL_OFFSET_HOURS` (10), `CU_RETENTION_DAYS` (14), `CU_FALLBACK_HOURS`
 (2, the window of a leg that never wrote `finished`), `CU_RUNS_DIR`, `CU_LEDGER`.
 
@@ -64,7 +64,7 @@ from datetime import datetime, timedelta, timezone
 
 try:
     import requests
-except ImportError:  # the offline tests stub it; the workflow installs duckrun, which brings it
+except ImportError:  # the offline tests stub it; the workflow installs requirements/tools.txt
     requests = None
 
 PBI = "https://api.powerbi.com/v1.0/myorg"
@@ -132,19 +132,20 @@ _TOKEN = None
 
 
 def token() -> str:
-    """`PBI_TOKEN` when set (the by-hand escape hatch), else duckrun's own OIDC exchange for
-    the Power BI audience -- the one deploy.py already uses to refresh a semantic model."""
+    """`PBI_TOKEN` when set (the by-hand escape hatch), else tokens.py's Power BI audience --
+    `az` after the job's azure/login."""
     global _TOKEN
     if _TOKEN:
         return _TOKEN
     t = os.environ.get("PBI_TOKEN", "").strip()
     if not t:
         try:
-            from duckrun.auth import get_powerbi_token
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import tokens
 
-            t = get_powerbi_token()
+            t = tokens.get_token("powerbi")
         except Exception as ex:  # noqa: BLE001
-            die(f"no PBI_TOKEN and duckrun could not mint one ({type(ex).__name__}: {ex}). "
+            die(f"no PBI_TOKEN and none could be minted ({type(ex).__name__}: {ex}). "
                 f"By hand: `az account get-access-token --resource "
                 f"https://analysis.windows.net/powerbi/api --query accessToken -o tsv` as PBI_TOKEN.")
     _TOKEN = t
@@ -543,7 +544,7 @@ def summary_table(ledger: dict, read: dict, now_utc: datetime) -> str:
 
 def main() -> int:
     if requests is None:
-        die("`requests` is not installed (pip install -r requirements/duckrun.txt).")
+        die("`requests` is not installed (pip install -r requirements/tools.txt).")
     if not (WS and MODEL):
         die("CU_METRICS_WORKSPACE_ID and CU_METRICS_MODEL_ID must both be set.")
 
