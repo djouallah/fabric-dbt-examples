@@ -42,6 +42,11 @@ on:
         description: Files each fact model folds per run, NEWEST first (every engine honours it; a backlog converges over runs and shows as test WARNINGS, not failures). Small by default because every leg builds on the 7 GB runner.
         type: string
         default: "50"
+      spark_output:
+        description: WHERE spark writes its gold layer. local = a fresh directory on the runner, the whole backlog folded every run (process_limit lifted), nothing written to OneLake. onelake = spark_landing / spark_mart in the shared lakehouse, incremental across runs. Either way it reads the same landing zone.
+        type: choice
+        default: local
+        options: [local, onelake]
       deploy:
         description: Deploy the in-Fabric demo after the build? (the items are always provisioned) none = skip; no_model = everything except the semantic models; full = everything
         type: choice
@@ -75,6 +80,11 @@ jobs:
       # the four notebook engines go to Fabric; spark (local PySpark) stays on the runner.
       local: ${{ steps.pick.outputs.local }}
       fabric: ${{ steps.pick.outputs.fabric }}
+      # The engines whose gold layer this run rewrites IN THE LAKEHOUSE -- what layout.py reads
+      # back and what the deploy job binds a Direct Lake model to. spark is out of it when
+      # spark_output is local: its tables never left the runner, and the lakehouse's spark_mart
+      # is an older generation.
+      onelake: ${{ steps.pick.outputs.onelake }}
     steps:
       - id: pick
         # A GitHub matrix cannot be filtered by an input, so the list is computed here.
@@ -106,6 +116,11 @@ jobs:
           else
             echo "local=$SEL" >> "$GITHUB_OUTPUT"
             echo "fabric=[]" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ inputs.spark_output }}" = "onelake" ]; then
+            echo "onelake=$SEL" >> "$GITHUB_OUTPUT"
+          else
+            echo "onelake=$(echo "$SEL" | jq -c '[.[]|select(.engine!="spark")]')" >> "$GITHUB_OUTPUT"
           fi
 
   # LAND ONCE, HERE, so the five build legs can run at the same time.
@@ -143,6 +158,7 @@ jobs:
       RUNIN_MODE: ${{ inputs.mode }}
       RUNIN_DBT_SCHEMA: ${{ inputs.dbt_schema }}
       RUNIN_PROCESS_LIMIT: ${{ inputs.process_limit }}
+      RUNIN_SPARK_OUTPUT: ${{ inputs.spark_output }}
       RUNIN_DOWNLOAD_LIMIT: ${{ inputs.download_limit }}
       RUNIN_DAILY_DOWNLOAD_LIMIT: ${{ inputs.daily_download_limit }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
@@ -219,6 +235,8 @@ jobs:
       ENGINE: ${{ matrix.engine }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
       process_limit: ${{ inputs.process_limit }}
+      # spark only (spark_session.py): local = the runner's disk, whole backlog every run.
+      SPARK_OUTPUT: ${{ inputs.spark_output }}
       # Off a Fabric notebook DuckDB's azure extension needs the curl transport and the
       # system CA bundle.
       AZURE_TRANSPORT_OPTION_TYPE: curl
@@ -523,7 +541,9 @@ jobs:
     # run built no iceberg leg that job is SKIPPED, and `if: !cancelled()` below is what keeps
     # this one running anyway -- a skipped `needs` otherwise skips the jobs behind it.
     needs: [plan, build, fabric, compact]
-    if: ${{ !cancelled() }}
+    # Nothing to read when the run rewrote nothing in the lakehouse (a spark-only run with
+    # spark_output=local): an EMPTY BUILD_ENGINES means "every engine" to layout.py.
+    if: ${{ !cancelled() && needs.plan.outputs.onelake != '[]' }}
     runs-on: ubuntu-latest
     # Footers over OneLake for five engines' worth of tables; the source repo's four items
     # took ~10 minutes, and a too-short cap turns slowness into a red run.
@@ -534,9 +554,10 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # Only the engines this run built: reading an engine nobody rebuilt would record an
-      # older generation's layout under this run's id.
-      BUILD_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
+      # Only the engines this run rewrote in the lakehouse: reading an engine nobody rebuilt
+      # there (spark with spark_output=local) would record an older generation's layout under
+      # this run's id.
+      BUILD_ENGINES: ${{ join(fromJSON(needs.plan.outputs.onelake).*.engine, ',') }}
       AZURE_TRANSPORT_OPTION_TYPE: curl
       CURL_CA_INFO: /etc/ssl/certs/ca-certificates.crt
       PYTHONIOENCODING: utf-8
@@ -678,8 +699,8 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}
       DBT_SCHEMA: ${{ inputs.dbt_schema }}
-      # The engines this run built: one semantic model each, aemo_<engine>.
-      DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.engines).*.engine, ',') }}
+      # The engines this run rewrote in the lakehouse: one semantic model each, aemo_<engine>.
+      DEPLOY_ENGINES: ${{ join(fromJSON(needs.plan.outputs.onelake).*.engine, ',') }}
       DEPLOY_SEMANTIC_MODEL: ${{ inputs.deploy == 'full' }}
     steps:
       - uses: actions/checkout@v5

@@ -350,13 +350,37 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 
 ## The spark engine
 
-dbt-spark with `method: session`: local PySpark + delta-spark on the runner, reading the
-landing zone and writing `spark_landing` / `spark_mart` straight into the shared lakehouse over
-`abfss://`. The official repo runs Fabric Spark (dbt-fabricspark over Livy); this one runs the
-same models where the repo runs. `.github/scripts/spark_session.py` builds the session BEFORE
-dbt does, because none of this can be set on a running JVM:
+dbt-spark with `method: session`: local PySpark + delta-spark on the runner, operators on Velox
+through Apache Gluten, reading the landing zone over `abfss://`. The official repo runs Fabric
+Spark (dbt-fabricspark over Livy); this one runs the same models where the repo runs.
+`.github/scripts/spark_session.py` builds the session BEFORE dbt does, because none of this can
+be set on a running JVM:
 
-- **OneLake auth with no secret.** Hadoop's ABFS driver has no Azure CLI credential, so it uses
+- **`SPARK_OUTPUT` (pipeline input `spark_output`) says where the gold layer goes.** `local`,
+  the default: a directory on the runner, EMPTIED at session start, nothing written to OneLake
+  -- and `process_limit` is LIFTED, so every run folds the whole backlog (67 daily files,
+  5.1 GB of CSV on 2026-10-12). That is load-bearing: an empty warehouse that honoured
+  `process_limit` would fold the newest 50 files every run, green, with the backlog tests
+  warning, and could never reach parity. `onelake`: `spark_landing` / `spark_mart` in the
+  shared lakehouse, incremental across runs, bounded by `process_limit` like every other leg.
+  In `local` the lakehouse's `spark_mart` is an OLDER generation, so `pipeline.yml`'s `onelake`
+  plan output leaves spark out of `layout` and `deploy`; never point those at `engines`.
+  `tests_py/test_spark_session.py` pins all of it.
+- **Gluten is the Apache release bundle, and pins pyspark / delta-spark.** 1.7.0's `spark-4.0`
+  build is compiled against Spark 4.0.2 and Delta 4.0.1, hence the exact pins in
+  `requirements/spark.txt`; move them only with `GLUTEN_VERSION`. The jar is fetched and
+  sha512-checked at session start (`SPARK_GLUTEN=0` runs without it). It offloads LESS than
+  "Velox" suggests: **file scans stay in the JVM** (`spark.gluten.sql.columnar.filescan=false`)
+  because the release is built with ABFS, so an `abfss://` scan passes Gluten's validation and
+  then fails inside Velox's own ABFS client, which knows neither the OneLake host nor the
+  workload-identity token; and **the bundle has no Delta component** (Iceberg and Paimon only --
+  Delta needs a from-source `-Pdelta` build), so Delta reads and writes stay in the JVM too.
+  Velox gets filter / project / aggregate / join / sort / window / shuffle.
+- **ANSI is OFF** (`spark.sql.ansi.enabled=false`), on the builder rather than in the Gluten
+  conf: Gluten falls back to vanilla Spark under ANSI, it is the Fabric Spark 3.5 semantics the
+  models reached parity under, and an accelerator toggle must not change the numbers.
+
+- **OneLake auth with no secret**, in both outputs (the landing zone is OneLake). Hadoop's ABFS driver has no Azure CLI credential, so it uses
   `WorkloadIdentityTokenProvider` with the job's own federated identity: the GitHub OIDC token
   (audience `api://AzureADTokenExchange`, the one `azure/login` exchanges) is written to a file
   that a daemon thread re-writes every four minutes -- a GitHub OIDC token lives minutes. The
@@ -365,9 +389,9 @@ dbt does, because none of this can be set on a running JVM:
 - **`hadoop-azure` must match pyspark's bundled Hadoop exactly**; the version is read off
   pyspark's own `hadoop-client-api` jar, never pinned by hand. pyspark and delta-spark move
   together (`requirements/spark.txt`).
-- **A fresh runner's metastore is EMPTY.** The two databases are created with
-  `LOCATION <dbt>/Tables/<schema>` and every Delta table already under them is registered
-  before dbt starts. Without that, dbt-spark sees no relations, `is_incremental()` is false on
+- **A fresh runner's metastore is EMPTY** (matters for `onelake`). The two databases are
+  created with `LOCATION <dbt>/Tables/<schema>` and every Delta table already under them is
+  registered before dbt starts. Without that, dbt-spark sees no relations, `is_incremental()` is false on
   every run, and every incremental model rebuilds from scratch -- silently, with every test
   green.
 - **The fingerprint is in-process** (`run_dbt.py --fingerprint-out`, through a dbtRunner
