@@ -2,11 +2,11 @@
   "engine": "ducklake",
   "adapter": "duckdb",
   "model": "fct_summary",
-  "rows_total": 33717844,
-  "duids": 390,
-  "days": 531,
-  "date_min": "2025-04-30",
+  "rows_total": 3091677,
+  "duids": 378,
+  "days": 51,
+  "date_min": "2026-08-23",
   "date_max": "2026-10-12",
-  "mw_sum": 3266451093.9404593,
-  "price_sum": 2606416987.0444436
+  "mw_sum": 282852253.9994943,
+  "price_sum": 182614365.69629955
 }
