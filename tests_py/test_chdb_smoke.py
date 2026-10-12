@@ -76,7 +76,7 @@ def test_check_gating_does_not_know_about_chdb():
     assert "chdb" not in block.group(1)
 
 
-@pytest.mark.parametrize("script", ["provision.py", "remote_dbt.py", "run_dbt.py"])
+@pytest.mark.parametrize("script", ["provision.py", "run_dbt.py"])
 def test_ci_scripts_do_not_know_about_chdb(script):
     src = (REPO / ".github" / "scripts" / script).read_text(encoding="utf-8")
     assert not re.search(r"""["']chdb["']""", src), (

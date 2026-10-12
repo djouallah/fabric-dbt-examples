@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """The dbt commands ONE engine runs, WHEREVER that engine runs.
 
-    python .github/scripts/run_dbt.py <duckrun | iceberg | ducklake> [--no-fingerprint]
+    python .github/scripts/run_dbt.py <duckrun | iceberg | ducklake | polars> [--no-fingerprint]
 
-TWO CALLERS, ONE SEQUENCE -- build, the resume loop, a guarded `dbt retry`, the parity
-fingerprint -- so a leg on Fabric compute and a leg on the GitHub runner are the same run on
-different hardware, not two implementations that agree by inspection:
+THE TWO MODES RUN THE SAME SEQUENCE -- build, the resume loop, a guarded `dbt retry`, the
+parity fingerprint -- so a local leg and a Fabric run are the same run on different hardware,
+not two implementations that agree by inspection:
 
-  * remote_dbt.py, as the `entry` of a throwaway Fabric notebook. The steady state: DuckDB
-    folds the AEMO archive in memory and the 7 GB hosted runner was shut down mid-fct_scada
-    twice in one day.
-  * pipeline.yml's "dbt build on this runner" step, when the `local_runner` input is on.
+  * local: pipeline.yml's "dbt build on this runner" step (or a laptop).
+  * fabric: the deployed `run` notebook (fabric_items/run.Notebook), started by the deployed
+    pipeline.
 
 It used to be run_in_fabric.py, and the runner ran a bare `dbt build || dbt retry` instead.
 That bare form is why ducklake could not go local at all: its catalog is an auto-pausing
@@ -21,8 +20,7 @@ NOTHING HERE ASKS WHERE IT IS RUNNING. The environment is the caller's business 
 DUCKDB_TEMP_DIR note below -- so there is no "am I in Fabric" test to get wrong.
 
 ALL THREE ARE dbt-core 1.x, INVOKED IN-PROCESS through dbtRunner. Keeping it in-process is
-worth it here: the notebook kernel already has the adapter imported, and res.exception gives a
-real traceback in the streamed log. There used to be a second path -- iceberg spent a day on
+worth it here: res.exception gives a real traceback in the log. There used to be a second path -- iceberg spent a day on
 dbt OSS 2, a Rust engine with no dbtRunner to import, launched as a subprocess out of a
 separate dbt2/ project. Both are gone with it.
 
@@ -32,15 +30,14 @@ sys.path[0] -- so as dbt_in_fabric.py it was imported as a "plugin" during `dbt 
 re-executed itself recursively inside dbt's own invoke.
 
 dwh and spark do NOT come through here. dbt is only a client for them -- the compute is the
-Warehouse / the Livy session -- so they have no in-Fabric path and therefore no divergence to
-close, and moving them off a `dbt` subprocess onto dbtRunner is a change nothing offline can
+Warehouse / the Livy session -- and moving them off a `dbt` subprocess onto dbtRunner is a change nothing offline can
 judge (it would also take away check_gating.py's DBT_BIN escape hatch, which needs an
 executable). PROJECT below is the shape that would take them if that is ever decided.
 
 In Fabric it runs as a subprocess of the notebook kernel with cwd = the unpacked repo, and the
-tokens are already in the environment (remote_dbt.py's setup hook minted them from
+tokens are already in the environment (provision.py emits them there, minted by tokens.py from
 notebookutils); on the runner pipeline.yml mints them into $GITHUB_ENV. Either way the config
-arrives as env vars and stdout is streamed to the log.
+arrives as env vars.
 """
 import os
 import sys
@@ -51,15 +48,14 @@ REPO = Path(__file__).resolve().parents[2]
 
 # engine -> project directory. The DuckDB SUBSET, not all five (see the docstring): tests_py's
 # _layout.PROJECT_OF holds every engine, check_gating.py's ENGINES holds every engine, and
-# tests_py/test_local_runner.py asserts this subset and pipeline.yml's dwh/spark build step
+# tests_py/test_modes.py asserts this subset and pipeline.yml's dwh/spark build step
 # partition the five between them -- an engine in neither reaches no build step at all, which
 # is silent and green.
 PROJECT = {"duckrun": "dbt1", "iceberg": "dbt1", "ducklake": "dbt1", "polars": "dbt1"}
 
 argv = sys.argv[1:]
-# DEFAULT ON, and the polarity is load-bearing. The Fabric path and the demo notebook need the
-# fingerprint in THIS process, because remote_dbt.py lifts its JSON back out of the streamed
-# notebook log; the runner passes --no-fingerprint and runs the same run-operation as a step of
+# DEFAULT ON, and the polarity is load-bearing. The Fabric notebook needs the fingerprint in
+# THIS process; the runner passes --no-fingerprint and runs the same run-operation as a step of
 # its own, the one every local leg (dwh and spark too) already shares. An opt-IN flag would
 # mean a caller who forgets it publishes no fingerprint at all -- and a missing
 # history/parity/<engine>.json is invisible, because parity.py compare just reports it has
@@ -71,8 +67,7 @@ if engine not in PROJECT:
 project_dir = REPO / PROJECT[engine]
 
 # DuckDB spill. THE CALLER OWNS THIS: pipeline.yml sets DUCKDB_TEMP_DIR at job level for a
-# runner leg, and in Fabric nothing does -- remote_dbt.py's FORWARD allowlist deliberately
-# leaves it behind -- so there it is derived from TMPDIR, which the harness put on the
+# runner leg; in Fabric it is derived from TMPDIR, which the `run` notebook puts on the
 # notebook's ~135 GiB work disk (/tmp is a ~19 GiB overlay). setdefault is the whole branch.
 # The duckrun and iceberg on-run-start hooks read it.
 os.environ.setdefault(
@@ -84,10 +79,8 @@ os.makedirs(os.environ["DUCKDB_TEMP_DIR"], exist_ok=True)
 # AZURE_TRANSPORT_OPTION_TYPE and CURL_CA_INFO as belt and braces -- inside Fabric DuckDB's
 # default OneLake transport is the one that works -- which is the OPPOSITE of true on a GitHub
 # runner, where pipeline.yml sets both at job level and DuckDB fails the OneLake TLS handshake
-# without them ("Problem with the SSL CA cert (path? access rights?)"). They never reach Fabric
-# in the first place: remote_dbt.py's FORWARD allowlist is the guarantee, and
-# tests_py/test_local_runner.py pins it -- a test that fails before a run is spent, where the
-# pop only ever masked the mistake.
+# without them ("Problem with the SSL CA cert (path? access rights?)"). The Fabric notebook
+# never sets them.
 
 BASE = ["--target", engine, "--profiles-dir", "."]
 
@@ -154,8 +147,7 @@ if not ok:
 
 if not fingerprint:
     sys.exit(0)
-# Last, so its JSON is the tail of the log remote_dbt.py hands to parity.py capture -- and
-# only after a green build above: the run-operation reads the gold TABLE, not the run, so
+# Last, and only after a green build above: the run-operation reads the gold TABLE, not the run, so
 # taken after a failure it reports the previous run's numbers and parity.py would grade this
 # run on them.
 sys.exit(0 if run("run-operation", "parity_fingerprint") else 1)

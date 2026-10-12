@@ -37,6 +37,7 @@ Every correctness fix that existed in exactly one of the four repos is merged in
 
 import io
 import os
+import sys
 import tempfile
 import time
 import urllib.error
@@ -45,7 +46,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-import duckrun
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".github", "scripts"))
+import onelake  # noqa: E402
 
 # FILES_PATH is the fallback so the local recipe (`export FILES_PATH=./landing`) and a
 # laptop run still work with one variable; in Fabric, provision.py always sets both.
@@ -60,39 +62,20 @@ DOWNLOAD_LIMIT = int(os.environ.get("download_limit", "2"))
 # HTTP 403 — keep those on the smaller download_limit.
 DAILY_DOWNLOAD_LIMIT = int(os.environ.get("daily_download_limit", str(DOWNLOAD_LIMIT)))
 
-# duckrun is the transport for every engine, not just the duckrun target: it resolves OneLake
-# auth and gives a plain DuckDB connection, and it works against a local directory too.
-dr = duckrun.connect(LANDING_PATH, read_only=False)
-con = dr.con
-con.sql("INSTALL httpfs; LOAD httpfs; INSTALL json; LOAD json;")
-try:
-    con.sql(
-        "SET GLOBAL azure_transport_option_type='"
-        + os.environ.get("AZURE_TRANSPORT_OPTION_TYPE", "default")
-        + "'"
-    )
-except Exception:
-    pass
+# Plain DuckDB that can read the landing zone (onelake.py: an azure access_token secret on
+# OneLake, nothing locally). It runs the listing SQL and reads/writes the archive log.
+con = onelake.duckdb_connect(LANDING_PATH)
 
 
 def push_new(local_folder, rel):
-    dr.copy(local_folder, rel, overwrite=False)
+    """Upload what is not there yet: a landed CSV is never rewritten."""
+    onelake.put_dir(local_folder, onelake.join(LANDING_PATH, rel), overwrite=False)
 
 
 def push_replace(local_folder, rel):
-    """Overwrite whatever is already at `rel`. obstore delete-then-copy rather than a plain
-    overwrite so a file that vanished upstream does not linger in the landing zone."""
-    import obstore
-    from dbt.adapters.duckrun import objectstore, secret
-
-    base = f"{LANDING_PATH}/{rel}" if rel else LANDING_PATH
-    store = objectstore.build_store(base, secret.refreshed(dr.storage_options))
-    for n in os.listdir(local_folder):
-        try:
-            obstore.delete(store, n)
-        except Exception:
-            pass
-    dr.copy(local_folder, rel, overwrite=True)
+    """Overwrite what is at `rel`: the archive log and the DUID reference files. A PUT
+    replaces an object, so no delete first (and OneLake rejects obstore's batch delete)."""
+    onelake.put_dir(local_folder, onelake.join(LANDING_PATH, rel), overwrite=True)
 
 
 def download_aemo(session, files_path, download_limit, daily_download_limit):
@@ -344,9 +327,4 @@ if __name__ == "__main__":
     summary, landed = download_aemo(con, LANDING_PATH, DOWNLOAD_LIMIT, DAILY_DOWNLOAD_LIMIT)
     summary.show()
     print("Landed this run: " + ", ".join(f"{k}={v}" for k, v in landed.items()))
-    # The engine trees live in two dbt projects, so the build is run from inside one of
-    # them: dbt1/ is dbt-core 1.x (duckrun, ducklake, dwh, spark) and dbt2/ is dbt OSS 2
-    # (iceberg). See dbt2/dbt_project.yml for why they cannot share a root.
-    print("Done. Now run one of:")
-    print("  cd dbt1 && dbt build --target <duckrun|ducklake|dwh|spark> --profiles-dir .")
-    print("  cd dbt2 && dbt build --target iceberg --profiles-dir .")
+    print("Done. Now: cd dbt1 && dbt build --target <engine> --profiles-dir .")

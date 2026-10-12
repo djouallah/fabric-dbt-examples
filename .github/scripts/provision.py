@@ -307,8 +307,8 @@ def main() -> int:
         record.item(db_id, "catalog", "SQLDatabase", DUCKLAKE_SQL_DB, engine="ducklake")
         # The catalog is COMPUTE, and it is ducklake's alone: a Fabric SQL DB bills `Sql Usage`
         # against its own item (19.5k CU over three days beside spark's 73k of Livy, measured
-        # 2026-09-17), and nothing but the ducklake leg ever queries it. remote_dbt.py adds the
-        # leg's notebook to the same list; record.leg accumulates rather than replaces.
+        # 2026-09-17), and nothing but the ducklake leg ever queries it. In Fabric mode the
+        # notebook joins the same list; record.leg accumulates rather than replaces.
         record.leg("ducklake", compute=[db_id])
         emit("DUCKLAKE_CATALOG_DSN", f"Server={server};Database={database};Encrypt=yes")
         # DuckLake's parquet goes under the shared lakehouse's TABLES, as in the original
@@ -320,7 +320,7 @@ def main() -> int:
         # override of FILES_PATH: overriding that is what used to send this leg's downloader
         # off to a private copy of the CSVs.
         emit("DUCKLAKE_DATA_PATH", abfss(data_id, "Tables"))
-        # NOT ON CI, even though a `local_runner` ducklake leg now needs this token: THIS
+        # NOT ON CI, even though the ducklake leg needs this token there: THIS
         # SCRIPT'S STDOUT IS REDIRECTED INTO $GITHUB_ENV, so anything emitted here never passes
         # through ::add-mask:: and would sit unmasked in the job's environment. pipeline.yml's
         # "Mint the DuckLake catalog token" step mints the same audience with the mask. Off CI

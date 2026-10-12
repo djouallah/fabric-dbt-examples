@@ -8,4 +8,3 @@
 # duckdb_databases(). The other two DuckDB legs track the pre-release line instead.
 dbt-duckdb
 duckdb==1.5.5
-duckrun

@@ -3,4 +3,9 @@
 #
 # These used to arrive as duckrun's dependencies, because duckrun was also the scripts'
 # Fabric toolkit. duckrun is now ONLY the dbt adapter (requirements/duckrun.txt).
+#
+# duckdb unpinned on purpose: it must not fight an engine's own pin (iceberg's dev build,
+# ducklake's 1.5.5) when both files are installed together.
 requests
+duckdb
+obstore

@@ -605,8 +605,7 @@ def build_doc(per_engine: dict, engines: list[str], items: dict, prefixes: dict,
         "run": {"id": os.environ.get("GITHUB_RUN_ID"),
                 "sha": os.environ.get("GITHUB_SHA"),
                 "written": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-        "config": {"vcores": os.environ.get("FABRIC_CORES") or None,
-                   **({"spark": {"resource_profile": os.environ.get("SPARK_RESOURCE_PROFILE") or None}}
+        "config": {**({"spark": {"resource_profile": os.environ.get("SPARK_RESOURCE_PROFILE") or None}}
                       if "spark" in engines else {})},
         "engines": {e: {"item": items[e][1], "kind": items[e][0], "guid": items[e][2],
                         "schema_prefix": prefixes.get(e), "writer": WRITER.get(e, e)}

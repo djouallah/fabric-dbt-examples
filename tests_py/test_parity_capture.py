@@ -59,28 +59,12 @@ def test_capture_finds_the_fingerprint(name, tmp_path, monkeypatch, capsys):
     capsys.readouterr()
 
 
-def test_remote_legs_feed_capture_the_raw_log():
-    """remote_dbt.py must hand parity.py `result.log`, not the text it printed.
-
-    duckrun streams the notebook's output to the Actions log with a `[remote] ` prefix on
-    every line. That copy is for humans: prefixing the fingerprint's own lines would make
-    the captured text invalid JSON. The raw `result.log` is what has to reach capture(),
-    and the distinction is invisible until a leg builds fine and yields no measurement.
-    """
-    src = (REPO / ".github" / "scripts" / "remote_dbt.py").read_text(encoding="utf-8")
-    assert "input=result.log" in src, (
-        "remote_dbt.py no longer passes the RAW notebook log to parity.py capture -- if it "
-        "now passes the printed/prefixed copy, every remote leg silently stops producing a "
-        "fingerprint while still reporting success"
-    )
-
-
 def test_capture_reports_failure_when_there_is_no_fingerprint(tmp_path, monkeypatch, capsys):
     """A build that died before the run-operation must be a non-zero exit, not an empty file.
 
-    remote_dbt.py turns this into "build succeeded but no fingerprint was captured" and
-    fails the leg -- which is the only thing standing between a silent measurement gap and a
-    parity run that compares four engines and calls it agreement.
+    The fingerprint step pipes into capture(), so its exit fails the leg -- the only thing
+    standing between a silent measurement gap and a parity run that compares four engines and
+    calls it agreement.
     """
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO("22:00:00  Done. PASS=60\n"))
     assert parity.capture(tmp_path) == 1

@@ -8,9 +8,8 @@
 # moved dbt-core and dbt-duckdb behind that extra -- plain `pip install duckrun` is the
 # connect()/deploy API alone (DuckDB, delta-rs, OneLake auth, no dbt tree). This leg builds with
 # `--target duckrun`, i.e. duckrun's OWN dbt adapter, and nothing else in this file supplies dbt,
-# so a bare `duckrun` leaves the leg with no adapter at all. The other four legs stay on plain
-# `duckrun` deliberately: each brings its own adapter (dbt-duckdb / dbt-fabric / dbt-fabricspark)
-# and wants duckrun only for provisioning and for launching the notebook -- see iceberg.txt.
+# so a bare `duckrun` leaves the leg with no adapter at all. duckrun is ONLY this adapter: no
+# other requirements file installs it, and the scripts' Fabric needs are requirements/tools.txt.
 #
 # The extra also carries `dbt-core<2.0` and `dbt-duckdb<2.0`, which is what keeps the GLOBAL
 # `--pre` above from letting pip consider a dbt-core 2 pre-release for this dbt 1.x leg. That is
