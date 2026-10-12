@@ -13,14 +13,16 @@ dbt1/models/aemo/_staging.yml _dimensions.yml _marts.yml
                                            so one patch documents whichever tree is enabled
 macros/aemo_columns.sql                    the AEMO CSV layout — single source of truth, at the
                                            REPO ROOT: dbt1 reads it through ../macros
-dbt1/macros/                               what one engine's adapter forces: the T-SQL
-                                           OPENROWSET reader, the Spark staging dance, the
-                                           iceberg adapter overrides
+dbt1/macros/                               what one engine's adapter forces: the Spark
+                                           staging dance and file list, the iceberg adapter
+                                           overrides
 dbt1/tests/aemo/<engine>/                  the same 12 assertions, per dialect
 download_aemo.py                           one downloader, one landing zone, plain CSV
 .github/scripts/check_gating.py            proves the gating, offline
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/check_catalog_stats.py     proves the published page is not empty
+.github/scripts/run_dbt.py                 every engine's build: build, 40613 resume, retry, fingerprint
+.github/scripts/spark_session.py           the spark leg's local PySpark session: OneLake auth, metastore
 .github/scripts/fabric_run.py              runs one engine in Fabric (the deployed pipeline)
 .github/scripts/tokens.py                  every script's token: notebookutils in Fabric, az elsewhere
 .github/scripts/onelake.py                 OneLake (or a folder) for the scripts: DuckDB + obstore
@@ -49,8 +51,8 @@ nuances](engine-nuances.md) has what that cost and what it bought.
 
 ### How one run selects one engine
 
-`dbt build --target dwh` in `dbt1/` sets `target.name == 'dwh'`, so only
-`models/aemo/dwh/**` is `+enabled` and its four sibling trees parse into
+`dbt build --target spark` in `dbt1/` sets `target.name == 'spark'`, so only
+`models/aemo/spark/**` is `+enabled` and its four sibling trees parse into
 `manifest['disabled']`. The model file names are *identical* across all five trees — legal
 only because exactly one tree is enabled per run. There is no `--select` anywhere.
 

@@ -1,23 +1,23 @@
 """Land the AEMO source files, for every engine.
 
 ONE downloader. The four source repos each carried a ~380-line copy of this as a dbt PYTHON
-MODEL (`stg_csv_archive_log.py`), which does not work for half the engines: dbt-fabric's
-python models are PySpark-via-Livy only, so the dwh repo kept a fifth copy outside
-model-paths driven by a stub `dbt` object, and the spark leg has no usable python-model
-runtime here either. Landing is not a modelling step — it is a prerequisite — so it is a
-plain script, and each engine gets a thin `stg_csv_archive_log.sql` view over the parquet
-log this writes.
+MODEL (`stg_csv_archive_log.py`), which did not work for every engine: dbt-fabric's python
+models were PySpark-via-Livy only, so the dwh repo (the since-dropped Warehouse leg) kept a
+fifth copy outside model-paths driven by a stub `dbt` object. Landing is not a modelling
+step — it is a prerequisite, run ONCE for all five engines by the `land` job before the legs
+fan out — so it is a plain script, and each engine gets a thin `stg_csv_archive_log.sql` view
+over the parquet log this writes.
 
 ONE LANDING ZONE, ONE PATH, PLAIN CSV. The DuckDB-family repos used to gzip into `csv/`
-while dwh landed plain into `csv_raw/`, because Fabric Warehouse OPENROWSET cannot read
-gzip CSV at all (`DATA_COMPRESSION` is only valid under CSV PARSER 1.0, and 1.0 cannot
-parse the ragged/quoted AEMO rows; the only working combination is plain CSV + PARSER 2.0).
-Everything lands plain, in `csv_raw/`, once.
+while the since-dropped Warehouse leg landed plain into `csv_raw/`, because Fabric Warehouse
+OPENROWSET cannot read gzip CSV at all (`DATA_COMPRESSION` is only valid under CSV PARSER
+1.0, and 1.0 cannot parse the ragged/quoted AEMO rows). Plain is what every engine reads now;
+everything lands plain, in `csv_raw/`, once.
 
 THIS SCRIPT WRITES TO `LANDING_PATH`, NEVER TO `FILES_PATH`, and the difference is the
-whole point. `FILES_PATH` is per-engine — how that engine's dbt READS the landing zone,
-which for the dwh leg is a shortcut rather than the zone itself. `LANDING_PATH` is the same
-directory on all five legs. They were one variable once, and provision.py re-pointed it for
+whole point. `FILES_PATH` is per-engine — how that engine's dbt READS the landing zone
+(the same path on every engine today; the since-dropped Warehouse leg read it through a
+shortcut). `LANDING_PATH` is the same directory on all five legs. They were one variable once, and provision.py re-pointed it for
 two engines, so those legs quietly downloaded their own private copy of the CSVs: the
 parity comparison was then grading engines on different inputs, which makes it worthless.
 
@@ -121,7 +121,7 @@ def download_aemo(session, files_path, download_limit, daily_download_limit):
             if name.upper().endswith(".CSV"):
                 safe = name.replace("/", "_")
                 p = os.path.join(temp_dir, safe)
-                # Uncompressed: Fabric OPENROWSET cannot read gzip CSV. See the module docstring.
+                # Uncompressed: one plain-CSV landing zone for every engine. See the module docstring.
                 with open(p, "wb") as f:
                     f.write(z.read(name))
                 out.append((name, safe, p))

@@ -8,15 +8,14 @@ Grouped by *kind*, because the kind is the finding — dialect and adapter capab
 every model, while the compute shape, the axis people expect to matter, shows up in one place
 and changed no model.
 
-## Dialect — the same sentence, five grammars
+## Dialect — the same sentence, three grammars
 
 | engine | difference |
 |---|---|
-| dwh | T-SQL: `[date]`/`[time]` bracket quoting, `DATEPART(HOUR) * 100 + DATEPART(MINUTE)` for the HHMM `time` column, no `GREATEST` (a `UNION ALL` instead), `CAST(... AS VARCHAR(256))` because the Warehouse cannot store the `NVARCHAR` its string functions return |
-| dwh | T-SQL **pads strings on comparison** (`'ERB01' = 'ERB01 '` is TRUE); DuckDB and Spark do not. One trailing space in a join key split the engines for over a year with every test green |
-| spark | `to_timestamp(..., 'yyyy/MM/dd HH:mm:ss')`: Spark's `CAST(string AS TIMESTAMP)` returns `NULL` for slash dates instead of erroring, which silently nulled the whole column. DuckDB and T-SQL both parse slashes, so only this leg was affected |
+| spark | `to_timestamp(..., 'yyyy/MM/dd HH:mm:ss')`: Spark's `CAST(string AS TIMESTAMP)` returns `NULL` for slash dates instead of erroring, which silently nulled the whole column. DuckDB parses slashes, so only this leg was affected |
 | spark | no `DOUBLE PRECISION`, `date_format` for `strftime`, `TIMESTAMP` for `TIMESTAMPTZ` — the fingerprint macro carries a dialect branch for exactly this |
-| all | `DOUBLE → DECIMAL` tie-breaking is HALF_UP on Spark, HALF_EVEN on DuckDB and a third thing in T-SQL, which is why `parity.py` gives the money columns a relative tolerance and exact-matches everything else |
+| polars | Polars SQL has no zoned timestamp by any spelling (`TIMESTAMP` where the others write `TIMESTAMPTZ`), no `current_date` / `now()` (`dbt.current_timestamp()` renders the run's start as a literal), and resolves an unqualified column in `IN (SELECT ...)` against the outer tables too — so those columns are qualified. Column names are case-sensitive, unlike DuckDB |
+| all | `DOUBLE → DECIMAL` tie-breaking is HALF_UP on Spark and HALF_EVEN on DuckDB, which is why `parity.py` gives the money columns a relative tolerance and exact-matches everything else |
 
 ## Feature implementation — what the engine, adapter or catalog will actually do
 
@@ -34,17 +33,13 @@ and changed no model.
 | ducklake | the catalog DB needs `COLLATE Latin1_General_100_BIN2_UTF8`, which cannot be changed after creation |
 | ducklake | **two bearers, for two different services** — OneLake storage for the parquet and the Delta export, and a `database.windows.net` one for the catalog SQL DB (the profile forwards it as `meta_access_token`). In Fabric both come from `notebookutils` (through `provision.py` / `tokens.py`); on the runner `pipeline.yml` mints both with `az` and masks them |
 | all | `process_limit` caps the files a fact model folds per run and every engine selects them **newest first** (`ORDER BY archive_path DESC`). The direction is not cosmetic: the three DuckDB pre-hooks had no `ORDER BY` at all until 2026-09-19, so the five engines could fold different subsets of one backlog and `parity.py` graded them on different inputs. Newest first also makes a partial load recent data, which is why the `assert_all_*_files_processed_*` tests are `severity: warn` |
-| dwh | `OPENROWSET(... PARSER_VERSION='2.0')` over **plain** CSV: Fabric cannot read gzip CSV at all, and PARSER 1.0 cannot parse the ragged AEMO rows; at most 1024 explicit BULK paths *per statement*, hence `process_limit` |
-| dwh | `append`, not merge — Fabric has no compare-and-swap, and the file list already excludes what is loaded; never `--full-refresh`, which DROPs and recreates and deadlocks Fabric's background maintenance, loses grants and rebinds Direct Lake |
-| dwh | `fct_summary` merges on the full `[date],[time],[DUID]` key like spark. Its full-history lever is `REBUILD_SUMMARY=1` or `--vars 'rebuild_summary: true'` (emit every date, same write path), never `--full-refresh` |
-| dwh | the adapter wraps merge models in `MERGE ... USING (<sql>)`, so a top-level `WITH` is illegal, and wraps views in `EXEC('create view ... as <sql>')`, where a leading comment swallows the `SELECT` |
-| spark | dbt-fabricspark's `__dbt_tmp` is a **persistent** view on a schema-enabled lakehouse, so a model body can read neither a `TEMPORARY VIEW` nor a path datasource whose name Fabric's base32hex decoder rejects (`text.\`path\`` dies on the `x`; `parquet.\`path\`` only works because every letter of `parquet` is inside `0-9A-V`). The CSV read therefore lands in a `<model>__stage` Delta table from two pre_hooks, and the body reads that |
-| spark | `threads: 4` is a hard cap — one Spark REPL per thread, five REPLs per Livy session; the adapter runs `OPTIMIZE` after every build unless told not to; V-Order is a workspace *resource profile*, not a session conf |
-| all | `fct_summary` is ONE design on all five, taken from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout): every run recomputes exactly the dates that could still be stale (never seen, the last 6 days, in the intraday feed) and merges key by key, with the intraday tail gated to units the daily archive can reproduce. Insert-only on the DuckDB family because the OneLake Iceberg catalog rejects a matched UPDATE, and the three DuckDB trees run one config; update+insert on spark and dwh. To reset one engine's summary, drop the table — the next run recomputes it (`--full-refresh` fails on iceberg) |
+| spark | the CSV read lands in a `<model>__stage` Delta table from two pre_hooks, and the body reads that. The shape was forced by Fabric Spark under the since-dropped dbt-fabricspark (a **persistent** `__dbt_tmp` view on a schema-enabled lakehouse, and a base32hex decoder that rejected `text.\`path\``); under dbt-spark's local session it is no longer forced, only proven — simplifying it to a direct read is a change to make on its own, with a parity run behind it |
+| spark | dbt-spark `method: session`: `.github/scripts/spark_session.py` builds the session before dbt does, because none of it can be set on a running JVM — OneLake auth through Hadoop's `WorkloadIdentityTokenProvider` fed the job's GitHub OIDC token (no secret; the file is re-written every four minutes), `hadoop-azure` matched to pyspark's bundled Hadoop, and every Delta table already under `spark_landing` / `spark_mart` registered in the runner's empty metastore — without that `is_incremental()` is false on every run and every incremental model silently rebuilds. `+file_format: delta` on the tree, because dbt-spark writes parquet unless told |
+| all | `fct_summary` is ONE design on all five, taken from [`direct-lake-parquet-layout`](https://github.com/djouallah/direct-lake-parquet-layout): every run recomputes exactly the dates that could still be stale (never seen, the last 6 days, in the intraday feed) and merges key by key, with the intraday tail gated to units the daily archive can reproduce. Insert-only on the DuckDB family because the OneLake Iceberg catalog rejects a matched UPDATE, and the three DuckDB trees run one config; `append` plus an anti-join on the key on polars, whose adapter ignores `merge_clauses`; update+insert on spark. To reset one engine's summary, drop the table — the next run recomputes it (`--full-refresh` fails on iceberg) |
 
 ## Compute shape — the axis that turned out not to matter
 
 | engine | difference |
 |---|---|
 | duckrun, iceberg, ducklake, polars | single-node DuckDB / Polars fold their batch in memory, on the 7 GB runner in the local mode (hence `process_limit` 50 by default: at 1000 DuckDB was OOM-killed mid-`fct_scada` and Polars ran out of out-of-core disk budget) or in the deployed `run` notebook in the Fabric mode. Both run the same `.github/scripts/run_dbt.py`. **No model changed.** |
-| dwh, spark | dbt runs on the runner as a client; the fold happens in the Warehouse / the Livy session. A first build over the whole archive costs cluster time, which is what `process_limit` bounds |
+| spark | local PySpark + delta-spark on the same runner, in both modes, writing Delta to the shared lakehouse over `abfss://`. It bills no Fabric compute; the fold happens in the runner's JVM, bounded by the same `process_limit` |

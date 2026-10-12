@@ -13,8 +13,9 @@ model for the compute items each leg used, inside the hours that leg ran. Nothin
 repo writes those two facts down: provision.py resolves every GUID and logs it to stderr,
 and the leg's start/finish exist only in the Actions UI.
 
-Unlike the source repo, NOTHING IS TORN DOWN HERE. The five engines share one lakehouse and the
-warehouse outlives every run, so a GUID does not belong to one run -- which is why every leg
+Unlike the source repo, NOTHING IS TORN DOWN HERE. The five engines share one lakehouse, and
+the catalog SQL DB and the deployed `run` notebook outlive every run, so a GUID does not belong
+to one run -- which is why every leg
 records `started` / `finished` beside its `compute` GUIDs, and why the ledger is keyed per run
 and engine rather than per item. See history/README.md.
 
@@ -80,10 +81,11 @@ def merge(obj: dict, p: str | None = None) -> str | None:
 def item(guid: str | None, role: str, kind: str, name: str, **extra) -> str | None:
     """Record one Fabric item under its GUID.
 
-    `role` is a closed vocabulary -- `landing` | `data` | `warehouse` | `catalog` | `folder` |
-    `compute` -- and `kind` is Fabric's own item type (`Lakehouse`, `Warehouse`, `SQLDatabase`,
-    `Notebook`, `Folder`). The GUID is upper-cased because the metrics model returns item ids
-    upper-cased; normalising at write time makes the join a dict lookup.
+    `role` is a closed vocabulary -- `landing` | `data` | `catalog` | `folder` | `compute` --
+    and `kind` is Fabric's own item type (`Lakehouse`, `SQLDatabase`, `Notebook`, `Folder`).
+    Records from before the Warehouse leg was dropped also carry `warehouse` / `Warehouse`.
+    The GUID is upper-cased because the metrics model returns item ids upper-cased;
+    normalising at write time makes the join a dict lookup.
 
     A blank GUID is dropped rather than recorded as null: a null key joins to nothing and reads
     as an item nobody can find.
@@ -107,6 +109,8 @@ def leg(engine: str, **fields) -> str | None:
     """
     if not engine:
         return None
+    # A field with no value is not written: None would overwrite a value another step set.
+    fields = {k: v for k, v in fields.items() if v is not None}
     if "compute" in fields:
         new = [str(g).upper() for g in fields["compute"] if g]
         p = path()

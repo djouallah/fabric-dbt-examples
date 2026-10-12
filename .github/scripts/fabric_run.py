@@ -12,7 +12,11 @@ in the shared `dbt` lakehouse; this script copies it to history/parity/<engine>.
 local mode's fingerprint step writes, so `parity.py compare` grades both modes the same way.
 
 The leg's compute is the notebook item: it is recorded as the leg's compute GUID, the way
-measure_cu.py attributes capacity units to a run and an engine.
+measure_cu.py attributes capacity units to a run and an engine. EVERY fabric leg shares that
+one GUID, so the leg's WINDOW must be the pipeline job instance's own start and end -- written
+here from Fabric's timestamps -- and never the GitHub job's: the matrix legs start together and
+wait while the pipeline (concurrency 1) runs them one after another, so their GitHub windows
+overlap completely and each would be credited with every other leg's notebook CU.
 
 Exit 1 when the pipeline run does not succeed or the fingerprint is missing.
 """
@@ -32,6 +36,16 @@ PIPELINE = "run_pipeline"
 NOTEBOOK = "run"
 POLL_SECONDS = 30
 TIMEOUT_SECONDS = 3 * 3600
+
+
+def _utc(stamp) -> str | None:
+    """Fabric's `2026-10-12T03:01:02.1234567` (UTC) in record.now()'s shape, or None."""
+    if not stamp:
+        return None
+    from datetime import datetime, timezone
+
+    head = str(stamp).rstrip("Z").split(".")[0]
+    return datetime.fromisoformat(head).replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def main() -> int:
@@ -68,6 +82,8 @@ def main() -> int:
         print(f"  {int(time.time() - t0)}s: {status}", flush=True)
         if status in ("Completed", "Failed", "Cancelled", "Deduped"):
             break
+    record.leg(engine, started=_utc(j.get("startTimeUtc")), finished=_utc(j.get("endTimeUtc")),
+               outcome="success" if status == "Completed" else (status or "timeout").lower())
     if status != "Completed":
         reason = (j.get("failureReason") or {}) if isinstance(j, dict) else {}
         sys.exit(f"{PIPELINE} for {engine} ended {status or 'TIMED OUT'}: "

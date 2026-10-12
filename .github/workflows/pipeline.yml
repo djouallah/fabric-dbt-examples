@@ -418,8 +418,10 @@ jobs:
           allow-no-subscriptions: true
       - name: Open the leg's record fragment
         run: echo "RUN_RECORD=$RUNNER_TEMP/record/record-20-fabric-$ENGINE.json" >> "$GITHUB_ENV"
-      - name: Record leg start
-        run: python .github/scripts/record.py leg-start "$ENGINE"
+      # NO leg-start / leg-end here on success: fabric_run.py writes the leg's window from the
+      # pipeline job instance's own timestamps. The legs share one notebook GUID and their
+      # GitHub windows overlap (they queue on the pipeline's concurrency of 1), so a GitHub-side
+      # window would credit each leg with every other leg's CU.
       # Starts run_pipeline for this engine, waits, and copies the notebook's fingerprint to
       # history/parity/<engine>.json -- where the build job's fingerprint step writes.
       - name: Run in Fabric
@@ -430,9 +432,11 @@ jobs:
           name: parity-${{ matrix.engine }}
           path: history/parity/${{ matrix.engine }}.json
           if-no-files-found: warn
-      - name: Record leg end
-        if: always()
-        run: python .github/scripts/record.py leg-end "$ENGINE" "${{ job.status }}"
+      # Only when fabric_run.py could not write the window itself (it died before the job
+      # instance finished): the GitHub time is then the best there is.
+      - name: Record a failed leg
+        if: failure()
+        run: python .github/scripts/record.py leg-end "$ENGINE" failure
       - uses: actions/upload-artifact@v6
         if: always()
         with:

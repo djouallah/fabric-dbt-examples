@@ -11,21 +11,23 @@ one.** Whether an engine is distributed or single-node barely shows up. Read the
 `fct_summary.sql` files side by side and nothing in them cares that Spark has executors and
 DuckDB has one process. What does show up, on every single model, is:
 
-1. **The SQL dialect.** Bracket quoting, `DATEPART` against `strftime`, no `GREATEST` in
-   T-SQL, `to_timestamp` with an explicit format because Spark's `CAST` turns a slash date into
-   `NULL` rather than an error, `DOUBLE PRECISION` that Spark rejects, string comparison that
-   pads in T-SQL and does not elsewhere, three different ways to round a `DOUBLE` into a
-   `DECIMAL`.
+1. **The SQL dialect.** `date_format` against `strftime`, `to_timestamp` with an explicit
+   format because Spark's `CAST` turns a slash date into `NULL` rather than an error,
+   `DOUBLE PRECISION` that Spark rejects, no zoned timestamp and no `current_date` in Polars
+   SQL, two different ways to round a `DOUBLE` into a `DECIMAL`.
 2. **What each engine and adapter actually implements.** Which `MERGE` shapes the catalog
-   accepts, whether the adapter's temporary relation is a temp view or a persistent one, how
-   a CSV can be read at all, how many file paths one statement may name, whether
-   `--full-refresh` is safe, whether compaction is built in, what a hook may call.
+   accepts, whether the adapter honours `merge_clauses` or silently ignores them, how a CSV
+   can be read at all, whether `--full-refresh` works, whether compaction is built in, what a
+   hook may call — and whether there are hooks at all.
 
 [`engine-nuances.md`](engine-nuances.md) is what it took to get five engines to the
 same table. Almost every row there is one of those two kinds. The compute shape appears
-in exactly one place — the DuckDB legs need a machine with memory, so in CI they run
-*inside* Fabric too — and it changed no model.
+in exactly one place — the in-process legs fold their batch in memory, so on the 7 GB
+runner `process_limit` bounds the batch and a backlog converges over runs — and it changed no
+model.
 
 This replaces four repos that were the same project four times over —
 `dbt_fabric_python_iceberg`, `_dwh`, `_ducklake` and `_delta` — which had drifted far enough
-that three correctness fixes each existed in exactly one of them.
+that three correctness fixes each existed in exactly one of them. The Warehouse leg has
+since been dropped here; it lives on, with Fabric Spark, in the Microsoft-supported
+[fabric-medallion-dbt](https://github.com/djouallah/fabric-medallion-dbt).

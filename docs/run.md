@@ -23,9 +23,9 @@ pip install -r requirements/duckrun.txt
 python .github/scripts/check_gating.py duckrun   # one engine, in that engine's own env
 ```
 
-Gating runs **one engine per environment**, because two of the adapters cannot share one:
-`dbt-fabric` and `dbt-fabricspark` shadow each other under the `dbt.adapters` namespace. The
-three DuckDB legs can, though — `duckrun` brings `dbt-duckdb`, which is what `iceberg` and
+Gating runs **one engine per environment** in CI, so each engine is checked against its own
+pins: `iceberg` and `ducklake` are both `dbt-duckdb`, on different duckdb lines. Locally the
+three DuckDB legs can share one, though — `duckrun` brings `dbt-duckdb`, which is what `iceberg` and
 `ducklake` both run on, so one `pip install -r requirements/duckrun.txt` reaches three of the
-five in the no-argument form. CI runs it as a five-way matrix anyway, so each engine is
-validated against exactly its own pins.
+five in the no-argument form. CI runs it as a five-way matrix, so each engine is validated
+against exactly its own pins.

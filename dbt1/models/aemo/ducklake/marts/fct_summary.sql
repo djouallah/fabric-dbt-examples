@@ -16,7 +16,7 @@
 -- OneLake Iceberg REST catalog rejects a matched-UPDATE branch (BadRequest 400), and the three
 -- DuckDB trees run one config so duckrun and ducklake give up the update they could do.
 -- Consequence: a re-emitted row carrying REVISED mw/price does NOT overwrite what is stored --
--- craters (missing keys) are repaired, changed values are not. spark and dwh do update, so a
+-- craters (missing keys) are repaired, changed values are not. spark does update, so a
 -- revision would show up as a value difference between the engine pairs; the repair lever on
 -- this side is a reset: drop the table and the next run recomputes it (--full-refresh fails
 -- on the iceberg catalog: "fct_summary__dbt_tmp does not exist").
@@ -136,13 +136,13 @@ SELECT
   CAST(mw AS DECIMAL(18, 4)) AS mw,
   CAST(price AS DECIMAL(18, 4)) AS price,
   -- Provenance column only — no read path depends on it anymore. Kept (and kept
-  -- populated) to avoid a schema change that would force a table DROP on dwh.
+  -- populated) to avoid a schema change on the tables already written.
   (SELECT GREATEST(
     (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }}),
     COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMPTZ))
   )) AS cutoff
 FROM daily_summary
--- Parity with the spark and dwh copies, which end with the same sort. It makes no claim about
+-- Parity with the spark copy, which ends with the same sort. It makes no claim about
 -- physical layout: this SQL is a merge SOURCE, so nothing about the ordering reaches the
 -- stored table. It is here so the legs pay the same cost.
 ORDER BY date, time

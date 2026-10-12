@@ -1,7 +1,7 @@
 -- depends_on: {{ ref('fct_scada_today') }}
 -- depends_on: {{ ref('fct_price_today') }}
 
--- Power BI-facing summary at (date, time, DUID). Same logic as the DuckDB/DWH versions,
+-- Power BI-facing summary at (date, time, DUID). Same logic as the DuckDB and Polars versions,
 -- in Spark SQL: strftime -> date_format, TIMESTAMPTZ -> TIMESTAMP.
 --
 -- Determinism contract (see the duckdb version for the full story): the defect was in what

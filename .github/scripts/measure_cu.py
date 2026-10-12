@@ -9,24 +9,24 @@ endpoint: `Metrics By Item Operation And Hour`, summed server-side per (item, op
 
 WHY THE HOUR IS BACK IN THE GRAIN. The source repo deletes every item when a run finishes, so a
 GUID belongs to exactly one run and "CU per item, cumulative" is already CU per run per engine.
-Here NOTHING is torn down: five engines share one lakehouse, the warehouse outlives every run,
-and only the three throwaway notebooks are per-run items. So every leg records the hours it ran
+Here NOTHING is torn down: five engines share one lakehouse, and the deployed `run` notebook
+and ducklake's catalog SQL DB outlive every run. So every leg records the hours it ran
 (`legs.<engine>.started` / `finished`, record.py) and the GUIDs its compute bills against
 (`legs.<engine>.compute`), and a leg's CU is the sum over those items, those hours.
 
 COMPUTE ONLY. Every `OneLake …` operation is storage, and on a SHARED lakehouse the storage
 transactions in any window are the sum of all five legs plus anything else that touched the
 item -- there is nothing to attribute. They are excluded in the query and again here. What is
-left is unambiguous per engine (measured against the live model, 2026-09-17): each DuckDB
-leg's notebook (`Jupyter Notebook Scheduled Run`, a per-run item), ducklake's catalog SQL DB
-beside it (`Sql Usage`, nothing else queries it), dwh's `Warehouse Query` on its own item,
-spark's `High Concurrency Session Livy Run` on the lakehouse (only the spark leg opens Livy
-sessions there).
+left is compute (measured against the live model, 2026-09-17): the deployed `run` notebook in
+the Fabric mode (`Jupyter Notebook Scheduled Run`) and ducklake's catalog SQL DB (`Sql Usage`,
+nothing else queries it). A leg on the runner -- every leg in the local mode, spark in both,
+since it is local PySpark -- bills no Fabric compute and records no compute GUID, so it has
+no row here: ABSENT, not zero.
 
-WHAT THE WINDOW CANNOT DO. Two runs less than an hour apart share an hour on dwh and spark
-(both get that hour's whole CU); a Livy session idling past leg-end bills into the next hour
-and is missed. Both are recorded caveats, neither is fixed. Parallel legs of ONE run never
-collide: different items.
+WHAT THE WINDOW CANNOT DO. Two runs less than an hour apart share an hour, and both get that
+hour's whole CU. The Fabric mode's legs run in parallel on ONE `run` notebook item, so legs
+of one run whose windows share an hour each get that notebook's whole CU for it. Both are
+recorded caveats, neither is fixed.
 
 THE LEDGER -- history/cu.json:
 

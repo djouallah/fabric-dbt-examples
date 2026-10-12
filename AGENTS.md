@@ -18,9 +18,8 @@ the README table; do not quietly let the engines diverge.
 ## Two ways to run — and only two
 
 - **local**: `pipeline.yml` with `mode: local` (the default) builds every engine ON THE GitHub
-  RUNNER — `run_dbt.py` in-process for duckrun / iceberg / ducklake / polars, a `dbt`
-  subprocess for dwh / spark (dbt is only a client of the Warehouse / Livy there). A laptop is
-  the same thing. `process_limit` defaults to 50 because the in-process engines fold their
+  RUNNER — `run_dbt.py`, in-process, for every engine (spark is local PySpark: see "The spark
+  engine"). A laptop is the same thing. `process_limit` defaults to 50 because the in-process engines fold their
   batch in the runner's 7 GB: at 1000 the DuckDB legs were OOM-killed mid-`fct_scada`, and
   polars aborted the same model on `raise POLARS_OOC_DISK_BUDGET_MB` (run 38194802045). A
   backlog converges over runs.
@@ -29,7 +28,7 @@ the README table; do not quietly let the engines diverge.
   library) and then runs the deployed pipeline once per in-process engine
   (`.github/scripts/fabric_run.py`: start the job instance with `engine`, `run_id`,
   `land=False`, poll, copy the notebook's fingerprint from `Files/dbt_runs/<run_id>/` to
-  `history/parity/`). dwh and spark build from the runner in both modes.
+  `history/parity/`). spark builds on the runner in both modes.
 
 Nothing else. There used to be a third way — `remote_dbt.py` launching dbt in a throwaway
 notebook through duckrun's `run_python`, with a `FORWARD` allowlist, `SETUP` token hooks, a
@@ -55,9 +54,7 @@ python .github/scripts/check_gating.py   # every engine whose dbt is installed; 
 
 All five engines are dbt-core 1.x, so one environment reaches every one whose adapter is
 installed — with `dbt-duckdb` present that is duckrun, iceberg and ducklake in a single run.
-`dbt-fabric` and `dbt-fabricspark` still cannot share an environment (they shadow each other
-under `dbt.adapters`), so those two need their own venv and a `DBT_BIN` pointing at it. There
-is no `DBT2_BIN` any more; if you find a reference to one, it is stale.
+`DBT_BIN` points `check_gating.py` at another venv's dbt when you keep engines apart.
 
 `check_gating.py` is not optional. **The default failure mode of this layout is a run that
 builds NOTHING and exits 0** — a target name that stops matching a folder name disables
@@ -76,8 +73,7 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - **ONE dbt PROJECT, `dbt1/`, five engines.** Every dbt command runs from inside it
   (`--profiles-dir .`), which is why `.github/scripts/check_gating.py`'s `ENGINES` dict still
   maps engine → project dir — keep `tests_py/_layout.py` and
-  `.github/scripts/run_dbt.py`'s `PROJECT` in step with it (that one holds the three
-  DuckDB engines only — dwh and spark never go through it). The name `dbt1` is a scar:
+  `.github/scripts/run_dbt.py`'s `PROJECT` in step with it (every engine builds through it). The name `dbt1` is a scar:
   iceberg spent 2026-09-17 to 2026-09-18 in a sibling `dbt2/` on dbt OSS 2, because
   `catalogs.yml` cannot sit in a dbt 1.x project root. **Do not try that again without
   reading "Why iceberg is not on dbt OSS 2" below.**
@@ -119,8 +115,8 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   `check_gating.py` asserts `<engine>_landing` / `<engine>_mart` offline; do not weaken it.
 - **`LANDING_PATH` and `FILES_PATH` are different variables on purpose.** `download_aemo.py`
   writes to `LANDING_PATH`, which is identical on all five legs; `FILES_PATH` is how that
-  engine's dbt READS the zone (a shortcut, for dwh). They were one variable, and
-  `provision.py` re-pointed it for ducklake and dwh — so those legs downloaded their own
+  engine's dbt READS the zone. They were one variable, and `provision.py` re-pointed it for
+  two engines — so those legs downloaded their own
   private copy of the CSVs and `parity.py` was grading engines on different inputs. Never
   re-emit `FILES_PATH` to move an engine's data somewhere; give it its own key, the way
   `DUCKLAKE_DATA_PATH` does.
@@ -288,7 +284,7 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
 - **Every engine folds files NEWEST FIRST, and the direction is load-bearing.**
   `process_limit` caps how many unprocessed archive-log files a fact model ingests per run;
   `ORDER BY archive_path DESC` is what decides WHICH. Until 2026-09-19 the three DuckDB
-  pre-hooks had no `ORDER BY` at all while `new_source_files.sql` (dwh) and
+  pre-hooks had no `ORDER BY` at all while the T-SQL engine (since dropped) and
   `spark_new_files.sql` (spark) ordered ascending, so on any run with a `process_limit` smaller
   than the backlog the five engines folded DIFFERENT FILES and `parity.py` reported that as a
   logic difference. Change the direction in one place and you must change it in all five plus
@@ -320,35 +316,22 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   just paid OneLake write traffic to make the layout worse. The parameter list is worth reading
   before tuning it (`SELECT parameters FROM duckdb_functions() WHERE function_name =
   'iceberg_rewrite_data_files'`) — a wrong name is a loud Binder Error, so it is cheap to check.
-- **Fabric OPENROWSET cannot read gzip CSV.** `DATA_COMPRESSION` is only valid under PARSER
-  1.0, which cannot parse the ragged/quoted AEMO rows. Plain CSV + PARSER 2.0 is the only
-  working combination, and it is why everything lands uncompressed.
-- **dbt-fabric wraps singular tests in a CTE of its own**, so a test's SQL cannot start with
-  `WITH` — use nested derived tables (`dbt1/tests/aemo/dwh/*`). Merge models are built as a CTAS
-  temp table and merged FROM it, so `fct_summary` may start with `WITH` (it does). Views are
-  wrapped in `EXEC('create view ... as <sql>')`, where a leading `-- {{ ref(...) }}` comment
-  collapses onto the SELECT and comments it out.
-- **Never `--full-refresh` on dwh.** It DROPs and recreates: a Sch-M swap that deadlocks
-  Fabric background maintenance, loses grants and rebinds Direct Lake.
 - **`fct_summary` is ONE design on all five engines**, taken from
   `djouallah/direct-lake-parquet-layout`: recompute the dates that could still be stale each
   run (never seen, last 6 days, in the intraday feed), merge key by key, gate the intraday
   tail on `dispatch_duids`. The consolidation first shipped three generations of it (a
-  has-new-daily probe on the DuckDB legs, a runner probe on dwh, the reference on spark) and
-  parity split by up to 63k rows. Do not reintroduce a per-engine variant. A drifted summary
-  is reset by DROPPING the table — any engine, a one-off manual drop is fine on dwh too, it is
-  the per-run `--full-refresh` that is not — because merge cannot retract rows and
+  has-new-daily probe on the DuckDB legs, a runner probe on the since-dropped Warehouse leg,
+  the reference on spark) and parity split by up to 63k rows. Do not reintroduce a per-engine
+  variant. A drifted summary is reset by DROPPING the table, because merge cannot retract rows and
   `--full-refresh` on iceberg fails (`fct_summary__dbt_tmp does not exist`) — that catalog
   cannot do the rename the intermediate relation needs. The reset is a DROP on every engine.
-- **Fabric's Spark catalog base32hex-decodes every part of a multipart name** (alphabet
-  `0-9A-V`). `text.\`path\`` fails on the `x` ("Failed to decode multipart name: 'text'");
-  `parquet.\`path\`` works only because every letter of `parquet` is inside the alphabet. And
-  on a schema-enabled lakehouse dbt-fabricspark's `__dbt_tmp` is a PERSISTENT view, so a model
-  body cannot read a TEMPORARY VIEW either. The spark fact models therefore read through a
-  `<model>__stage` Delta table built by two pre_hooks (`dbt1/macros/spark_read_csv.sql`). Do not
-  "simplify" it back to a direct read.
+- **The spark fact models read through a `<model>__stage` Delta table** built by two pre_hooks
+  (`dbt1/macros/spark_read_csv.sql`). That shape was forced by Fabric Spark under
+  dbt-fabricspark (a persistent `__dbt_tmp` view, base32hex-decoded multipart names); under
+  dbt-spark's session it is no longer forced, only proven. Simplifying it to a direct read of
+  the temp view is a change to make on its own, with a parity run behind it.
 - **Spark's `CAST(string AS TIMESTAMP)` returns NULL for `yyyy/MM/dd` instead of erroring.**
-  AEMO ships slashes. Parse the format explicitly. DuckDB and T-SQL both accept slashes, so
+  AEMO ships slashes. Parse the format explicitly. DuckDB accepts slashes, so
   only the spark leg was ever affected — a good example of why parity is checked.
 - **Spark compares a STRING column to an INT literal by casting the STRING to INT, and that
   cast truncates** — `'0.5' != 0` is FALSE. The spark csv temp view is all-STRING, so every
@@ -357,17 +340,43 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   and left `fct_summary`'s intraday tail 200-1,500 rows short on spark alone, with every dbt
   test green; only parity saw it (run 35188161001). `tests_py/test_spark_stage_filter.py`
   pins the cast.
-- **T-SQL pads strings on comparison** (`'ERB01' = 'ERB01 '` is TRUE); DuckDB and Spark do
-  not. One trailing space in a join key can split the engines while every test stays green.
-- **`DOUBLE → DECIMAL` tie-breaking differs** (HALF_UP on Spark, HALF_EVEN on DuckDB, a third
-  thing in T-SQL), which is why `parity.py` gives the money columns a relative tolerance and
+- **`DOUBLE → DECIMAL` tie-breaking differs** (HALF_UP on Spark, HALF_EVEN on DuckDB), which is why `parity.py` gives the money columns a relative tolerance and
   exact-matches everything else.
 - **Direct Lake has no schema parameter.** A partition's `schemaName` is a literal in the
   model definition, so `semantic_model/.../model.bim` carries placeholders (`mart`, Desktop's
-  GUIDs) and `deploy.py` rewrites the schema to `<engine>_mart` per engine; duckrun rewrites
-  the GUIDs. dwh's model is Direct Lake on OneLake over the Warehouse item
-  (`mode="direct_lake"`). A model reframes on deploy, so the engine must have built once
+  GUIDs) and `deploy.bind_model` rewrites the schema to `<engine>_mart` and the GUIDs to the
+  shared lakehouse per engine. A model reframes on deploy, so the engine must have built once
   before its model can be deployed.
+
+## The spark engine
+
+dbt-spark with `method: session`: local PySpark + delta-spark on the runner, reading the
+landing zone and writing `spark_landing` / `spark_mart` straight into the shared lakehouse over
+`abfss://`. The official repo runs Fabric Spark (dbt-fabricspark over Livy); this one runs the
+same models where the repo runs. `.github/scripts/spark_session.py` builds the session BEFORE
+dbt does, because none of this can be set on a running JVM:
+
+- **OneLake auth with no secret.** Hadoop's ABFS driver has no Azure CLI credential, so it uses
+  `WorkloadIdentityTokenProvider` with the job's own federated identity: the GitHub OIDC token
+  (audience `api://AzureADTokenExchange`, the one `azure/login` exchanges) is written to a file
+  that a daemon thread re-writes every four minutes -- a GitHub OIDC token lives minutes. The
+  build job's `id-token: write` is load-bearing for it. Off GitHub, set
+  `AZURE_FEDERATED_TOKEN_FILE`.
+- **`hadoop-azure` must match pyspark's bundled Hadoop exactly**; the version is read off
+  pyspark's own `hadoop-client-api` jar, never pinned by hand. pyspark and delta-spark move
+  together (`requirements/spark.txt`).
+- **A fresh runner's metastore is EMPTY.** The two databases are created with
+  `LOCATION <dbt>/Tables/<schema>` and every Delta table already under them is registered
+  before dbt starts. Without that, dbt-spark sees no relations, `is_incremental()` is false on
+  every run, and every incremental model rebuilds from scratch -- silently, with every test
+  green.
+- **The fingerprint is in-process** (`run_dbt.py --fingerprint-out`, through a dbtRunner
+  callback): a separate `dbt run-operation` would start a JVM with none of the above.
+- `parse_filename` keys on `target.type == 'spark'` (dbt-fabricspark's type was
+  `fabricspark`, and a missed rename silently falls to the DuckDB branch). The spark tree is
+  `+file_format: delta` (dbt-spark's default is parquet). `skip_matched_step` was
+  dbt-fabricspark's; under dbt-spark a matched key updates, which only happens when two runs
+  fold the same file.
 
 ## The polars engine
 
@@ -523,20 +532,18 @@ Ported from `djouallah/direct-lake-parquet-layout` (`record.py`, `cu/measure.py`
 `history/README.md` is the reader-facing account. What differs here, and why:
 
 - **Nothing is torn down, so a GUID does not belong to one run.** The source deletes every item
-  when a run ends and reads CU cumulatively per item. Here the lakehouse is shared and the
-  warehouse persists, so every leg records `started`/`finished` (`record.py leg-start` /
-  `leg-end` in `pipeline.yml`, bracketing build + tests + **fingerprint** — on spark the
-  run-operation opens a new Livy session, on dwh it is a full Warehouse Query) and the GUIDs
+  when a run ends and reads CU cumulatively per item. Here the lakehouse is shared and
+  persists, so every leg records `started`/`finished` (`record.py leg-start` /
+  `leg-end` in `pipeline.yml`, bracketing build + tests + fingerprint) and the GUIDs
   its compute bills against (`legs.<engine>.compute`). `measure_cu.py` sums the hour grain of
   `Metrics By Item Operation And Hour` over those items in those hours, per run × engine.
 - **Compute only.** Every `OneLake …` operation is excluded, in the DAX and again in Python:
   on a shared lakehouse the storage transactions in any window are all five legs' plus
   whatever else touched the item. Compute is unambiguous per engine, measured 2026-09-17 —
-  each DuckDB leg's notebook (`Jupyter Notebook Scheduled Run`), ducklake's catalog SQL DB
-  (`Sql Usage`), dwh's `Warehouse Query` on its own item, spark's Livy run on the lakehouse
-  (only the spark leg opens Livy sessions there). `history/README.md` carries the table.
-- **Caveats the window cannot fix:** two runs under an hour apart share an hour on dwh/spark;
-  a Livy session idling past leg-end bills into the next hour. Documented, not fixed.
+  the deployed `run` notebook in the Fabric mode (`Jupyter Notebook Scheduled Run`) and
+  ducklake's catalog SQL DB (`Sql Usage`). spark is local PySpark: it bills no Fabric compute.
+  `history/README.md` carries the table.
+- **Caveat the window cannot fix:** two runs under an hour apart share an hour.
 - **`items` and `legs` are dicts, never lists.** The fragment merge is a recursive dict union
   that REPLACES lists, so a list would let the leg-end fragment wipe the leg-start.
   Fragments merge in BASENAME order (`download-artifact` nests each in its own directory).

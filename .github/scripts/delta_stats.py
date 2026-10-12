@@ -41,8 +41,9 @@ def _children(dtype):
 
 
 def physical_to_logical(dt) -> dict[str, str]:
-    """{physical: logical} for a column-mapped table (Fabric Warehouse always, Spark sometimes):
-    its footers are keyed `col-<guid>`. Empty when mapping is off; best-effort."""
+    """{physical: logical} for a column-mapped table (Spark sometimes; the since-dropped Fabric
+    Warehouse leg always): its footers are keyed `col-<guid>`. Empty when mapping is off;
+    best-effort."""
     out: dict[str, str] = {}
     try:
         mode = str((dt.metadata().configuration or {}).get("delta.columnMapping.mode", "")).lower()

@@ -20,19 +20,20 @@ hours they ran, and the ledger holds what those items cost in those hours.
  "run":    {"id": "35182005083", "sha": "...", "started": "...Z", "finished": "...Z", "url": "..."},
  "inputs": {"engines": "all", "dbt_schema": "mart", "process_limit": "1000", "...": "..."},
  "items":  {"<GUID>": {"role": "data", "kind": "Lakehouse", "name": "dbt"},
-            "<GUID>": {"role": "warehouse", "kind": "Warehouse", "name": "dbt_dwh", "engine": "dwh"},
-            "<GUID>": {"role": "compute", "kind": "Notebook", "name": "dbt-duckrun-35182005083", "engine": "duckrun"}},
- "legs":   {"duckrun": {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<notebook GUID>"]},
-            "dwh":     {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<warehouse GUID>"]},
-            "spark":   {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<dbt lakehouse GUID>"]}},
+            "<GUID>": {"role": "catalog", "kind": "SQLDatabase", "name": "dbt_ducklake_meta", "engine": "ducklake"},
+            "<GUID>": {"role": "compute", "kind": "Notebook", "name": "run", "engine": "duckrun"}},
+ "legs":   {"duckrun":  {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<notebook GUID>"]},
+            "ducklake": {"started": "...Z", "finished": "...Z", "outcome": "success", "compute": ["<notebook GUID>", "<SQL DB GUID>"]},
+            "spark":    {"started": "...Z", "finished": "...Z", "outcome": "success"}},
  "layout": {"stats":     {"<engine>": {"<table>": {"total_rows": 1, "num_files": 1, "num_row_groups": 1, "avg_row_group": 1, "size_mb": 1, "vorder": false, "compression": "SNAPPY"}}},
             "encodings": {"<engine>": {"<column>": {"encodings": ["PLAIN", "RLE_DICTIONARY"], "type": "INT32", "dict_pages": 1, "chunks": 1, "mb": 1}}},
             "ordering":  {"<engine>": {"columns": {"<column>": {"rg_overlap_pct": 0, "rgs": 1, "runs": 1}}, "sample": {}, "vorder_files": {}}}},
  "parity": {"<engine>": {"rows_total": 1, "mw_sum": 1, "...": "..."}}}
 ```
 
-- `role` is a closed vocabulary: `landing` · `data` (the shared `dbt` lakehouse) · `warehouse`
-  · `catalog` (ducklake's SQL DB) · `folder` · `compute` (the deployed `run` notebook, in the Fabric mode).
+- `role` is a closed vocabulary: `landing` · `data` (the shared `dbt` lakehouse) · `catalog`
+  (ducklake's SQL DB) · `folder` · `compute` (the deployed `run` notebook, in the Fabric mode).
+  Records from before the Warehouse leg was dropped also carry `warehouse` (`dbt_dwh`).
 - **`legs.<engine>.compute` are the items whose compute operations belong to that leg**, and
   `started` / `finished` bracket build + tests + fingerprint. Measured against the live model
   on 2026-09-17 (workspace `sqlengines`, capacity `CAT_Premium_Europe`):
@@ -41,12 +42,14 @@ hours they ran, and the ledger holds what those items cost in those hours.
   |---|---|---|
   | duckrun, iceberg, polars | the deployed `run` notebook, in the Fabric mode only | `Jupyter Notebook Scheduled Run` |
   | ducklake | that notebook **and** `dbt_ducklake_meta` (the catalog SQL DB — `Sql Usage`, 19.5k CU in three days, nothing else queries it) | `Jupyter Notebook Scheduled Run`, `Sql Usage` |
-  | dwh | `dbt_dwh` (Warehouse) | `Warehouse Query` |
-  | spark | `dbt` (the shared Lakehouse — a Livy session bills against the lakehouse it was opened on, and only the spark leg opens one there) | `High Concurrency Session Livy Run` |
+  | spark | none — local PySpark on the runner, in both modes | — |
 
-  Deliberately **not** attributed to any leg: the demo notebook `run` and its pipeline
-  (`Jupyter Notebook Pipeline Run`, `ActivityRun`), the deployed semantic models (`Query`,
-  refreshes), and every `OneLake …` storage operation.
+  In the Fabric mode every leg's compute is that same `run` notebook, so a leg's window is the
+  pipeline job instance's own start and end (fabric_run.py writes it from Fabric's timestamps)
+  — the GitHub-side windows overlap, because the legs queue on the pipeline's concurrency of 1.
+  Deliberately **not** attributed to any leg: the pipeline's own `ActivityRun`, the deployed
+  semantic models (`Query`, refreshes), runs of the pipeline's 12-hourly schedule, and every
+  `OneLake …` storage operation.
 - Every job writes a *fragment* (`record.py`, `RUN_RECORD` env) and the `record` job merges
   them by basename order. `items` and `legs` are dicts because the merge unions dicts and
   replaces lists.
@@ -64,14 +67,14 @@ hours they ran, and the ledger holds what those items cost in those hours.
  "runs": {"35182005083": {"started": "...Z", "engines": {
      "duckrun": {"cu": {"Notebook run": 4120.5}, "seconds": {"Notebook run": 1830.2},
                  "window": ["2026-09-17T03:20:00Z", "2026-09-17T03:51:00Z"]},
-     "dwh":     {"cu": {"Warehouse Query": 8016.0}, "seconds": {"Warehouse Query": 1204.5}, "window": ["...Z", "...Z"]},
-     "spark":   {"cu": {"High Concurrency Session Livy Run": 24865.3}, "seconds": {"High Concurrency Session Livy Run": 2100.0},
+     "ducklake": {"cu": {"Sql Usage": 512.0}, "seconds": {"Sql Usage": 1204.5},
                  "window": ["...Z", "...Z"], "partial": true}}}}}
 ```
 
 **A local leg has no Fabric compute of its own.** In the local mode (`pipeline.yml`'s
-default) duckrun, iceberg and polars build on the GitHub runner, so there is no compute GUID and
-`measure_cu.attribute()` makes no row for that (run, engine): **ABSENT, not zero**. That is the
+default) duckrun, iceberg and polars build on the GitHub runner — and spark does in both modes,
+as local PySpark — so there is no compute GUID and `measure_cu.attribute()` makes no row for
+that (run, engine): **ABSENT, not zero**. That is the
 truth — GitHub compute is not Fabric capacity — but it is indistinguishable from a lost
 measurement, so check the run record's `inputs.mode` before reading a gap as a bug. **ducklake is
 the exception: it is PRESENT with `Sql Usage` alone** — its catalog SQL DB is a compute item
@@ -104,10 +107,10 @@ you want settled sooner: dispatch `Capacity units` by hand (`gh workflow run "Ca
 
 **What the window cannot do, recorded rather than fixed:**
 
-- two runs less than an hour apart share an hour on dwh and spark, and both get that hour's
-  whole CU (the notebook legs are per-run items and immune);
-- a Livy session idling past leg-end bills into the next hour and is missed (spark is a lower
-  bound);
+- two runs less than an hour apart share an hour, and both get that hour's whole CU (the `run`
+  notebook and the catalog SQL DB are persistent items, not per-run ones);
+- in the Fabric mode the in-process legs run in parallel on ONE `run` notebook item, so legs of
+  one run whose windows share an hour each get that notebook's whole CU for it;
 - a leg that died before `leg-end` (cancelled job, dead runner) has no `finished`; the ledger
   assumes `CU_FALLBACK_HOURS` (2) and marks the entry `partial`. Cancelling a GitHub job never
   stops Fabric.

@@ -4,12 +4,13 @@
 Five adapters, one set of business logic, one gold table. This is what makes that a
 checkable claim rather than an assertion in a README.
 
-Each engine's CI leg runs, through its OWN adapter:
+Each engine's leg fingerprints through its OWN adapter, in-process, as the last step of
+run_dbt.py -- `dbt run-operation parity_fingerprint`, its log parsed by extract() below:
 
-    dbt run-operation parity_fingerprint --target <engine> --profiles-dir . \
-        | python .github/scripts/parity.py capture history/parity
+    python .github/scripts/run_dbt.py <engine> --fingerprint-out history/parity/<engine>.json
 
-and once the legs are done:
+(`capture` does the same for a run-operation log piped in by hand), and once the legs are
+done:
 
     python .github/scripts/parity.py compare history/parity
 
@@ -18,15 +19,16 @@ difference there is a real difference in what the pipeline produced. The money c
 a relative tolerance, because two engines can compute the same thing and still disagree in
 the last place:
 
-  * DOUBLE -> DECIMAL tie-breaking is HALF_UP on Spark, HALF_EVEN on DuckDB and a third
-    thing in T-SQL. A neutral reader cannot grade a writer's rounding.
+  * DOUBLE -> DECIMAL tie-breaking is HALF_UP on Spark and HALF_EVEN on DuckDB. A neutral
+    reader cannot grade a writer's rounding.
   * Summing ~10^5 doubles in a different order gives a different last bit.
 
 The tolerance is 1e-7 relative. It is there to absorb rounding and float association, not
 to paper over a logic difference -- if a leg drifts past it, that is a finding, not a
-threshold to raise. Measured 2026-09-16: ducklake and dwh with IDENTICAL row counts (26.8M
-rows, a clean recomputation on both) differed by 1.0e-8 on mw_sum and 3.7e-8 on price_sum --
-26.8M DECIMAL(18,4) roundings, three tie-breaking rules. The old 1e-9 failed that pair.
+threshold to raise. Measured 2026-09-16: ducklake and the since-dropped Warehouse leg (dwh,
+T-SQL, a third tie-breaking rule) with IDENTICAL row counts (26.8M rows, a clean
+recomputation on both) differed by 1.0e-8 on mw_sum and 3.7e-8 on price_sum -- 26.8M
+DECIMAL(18,4) roundings. The old 1e-9 failed that pair.
 """
 from __future__ import annotations
 
@@ -116,8 +118,8 @@ def compare(in_dir: Path) -> int:
             print(f"  {f}", file=sys.stderr)
         print(
             "\nBefore changing a tolerance, check the two usual causes:\n"
-            "  * a string join key with a trailing space (T-SQL pads on comparison; the\n"
-            "    others do not), which changes row counts, not just sums\n"
+            "  * a string join key with a trailing space (it once split the since-dropped\n"
+            "    T-SQL leg, which pads on comparison), which changes row counts, not just sums\n"
             "  * one engine's model drifting from the shared business logic — diff the\n"
             "    dbt1/models/aemo/<engine>/ copies against each other.\n"
             "    `diff -r dbt1/models/aemo/duckrun dbt1/models/aemo/iceberg` is the\n"

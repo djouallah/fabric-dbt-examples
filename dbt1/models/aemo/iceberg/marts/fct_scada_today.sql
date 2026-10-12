@@ -13,8 +13,8 @@
      cosmetic. archive_path is '/<subfolder>/PUBLIC_*_YYYYMMDD*.CSV', so lexicographic DESC is
      chronological. Two reasons, both learned:
        * A bare `LIMIT process_limit` with no ORDER BY -- which is what stood here -- lets
-         DuckDB return ANY n of the backlog, and a different n per engine. dwh and spark order
-         theirs (new_source_files.sql, spark_new_files.sql), so on a run with a small
+         DuckDB return ANY n of the backlog, and a different n per engine. spark ordered
+         theirs (spark_new_files.sql, and the since-dropped T-SQL leg), so on a run with a small
          process_limit the five engines folded DIFFERENT FILES and parity.py graded them on
          different inputs, reporting that as a logic difference.
        * Newest first means a partial load is RECENT data. The backlog is then old data still
