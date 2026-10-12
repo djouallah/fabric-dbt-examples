@@ -373,7 +373,8 @@ probe stays as the place to try an adapter question cheaply.
   PR. A new adapter bug: fix it on a branch off `upstream/main` in the fork (with a test and a
   changelog line), let the fork's CI pass (open a draft PR INSIDE the fork — its CI only runs
   on PRs), merge into `aemo`, re-pin. Never push to `datamindedbe`. Today: #29 (a source can
-  name `.CSV`) and dtype names in `read_options`.
+  name `.CSV`), dtype names in `read_options`, and `run-operation` resolving a `ref()` (the
+  parity fingerprint; run-operation never populates the adapter cache).
 - **Files are read as SOURCES, padded to 131 String columns.** Polars SQL `read_csv()` takes a
   path and no options, so the ragged AEMO files can only be read through a source's
   `read_options`. A headerless read takes its width from the FIRST line and

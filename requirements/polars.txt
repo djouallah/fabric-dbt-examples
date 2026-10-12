@@ -5,6 +5,8 @@
 #   fix/source-file-extension    a source can name a `.CSV` file (dbt-polars#29, PR #30)
 #   fix/read-options-dtype-names  read_options can name dtypes (`schema: {a: String}`), which
 #                                 the padded read in macros/polars_read_csv.sql needs
+#   fix/run-operation-ref         run-operation can read a ref(), which the parity
+#                                 fingerprint needs (it never populates the adapter cache)
 # Pinned by COMMIT, so a push to the branch cannot change what a run installs. Re-pin after
 # merging a fix into `aemo`; return to the PyPI line (`dbt-polars[iceberg,azure]`) once a
 # release carries them all.
@@ -15,7 +17,7 @@
 # version>, which the fork keeps at upstream's.
 #
 # duckrun is the RUNNER's: remote_dbt.py imports it to start the Fabric notebook.
-dbt-polars[iceberg] @ https://github.com/djouallah/incubator-dbt-polars/archive/776997b0c4d612867d8d4f319a3fc3e09ed1610b.zip
-dbt-polars-catalog-local @ https://github.com/djouallah/incubator-dbt-polars/archive/776997b0c4d612867d8d4f319a3fc3e09ed1610b.zip#subdirectory=catalogs/dbt-polars-catalog-local
-dbt-polars-catalog-azure @ https://github.com/djouallah/incubator-dbt-polars/archive/776997b0c4d612867d8d4f319a3fc3e09ed1610b.zip#subdirectory=catalogs/dbt-polars-catalog-azure
+dbt-polars[iceberg] @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip
+dbt-polars-catalog-local @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-local
+dbt-polars-catalog-azure @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-azure
 duckrun
