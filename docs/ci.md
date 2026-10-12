@@ -13,10 +13,8 @@ record: the Fabric items each leg touched, what it wrote, and what it cost in ca
   fingerprints and commits one run record to `history/runs/`. Each leg does `dbt build`
   (models and tests) → fingerprint. **Two modes, chosen by the `mode` input.** `local` (the
   default): every engine builds on the runner, in-process — DuckDB, Polars, and spark as local
-  PySpark + delta-spark with Gluten/Velox, reading the landing zone over `abfss://` and writing
-  its Delta to the runner's disk (whole backlog every run, `process_limit` lifted) or, with
-  `spark_output: onelake`, to OneLake incrementally. `process_limit` defaults to 50, because
-  the runner has 7 GB. `fabric`: CI deploys with fabric-cicd and runs the deployed
+  PySpark + delta-spark writing Delta to OneLake over `abfss://`. `process_limit` defaults to
+  50, because the runner has 7 GB. `fabric`: CI deploys with fabric-cicd and runs the deployed
   pipeline once per in-process engine (duckrun, iceberg, ducklake, polars), waiting for each
   (next section); spark still builds on the runner. Every engine, in both modes, runs the same
   `.github/scripts/run_dbt.py` — build, the 40613 loop that waits out ducklake's auto-paused

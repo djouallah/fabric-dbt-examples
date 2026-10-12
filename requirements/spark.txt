@@ -7,10 +7,6 @@
 # and the hadoop-azure jar run_dbt.py adds must match the Hadoop that pyspark bundles (3.4.x
 # for 4.0) -- run_dbt.py reads that version off pyspark's own jars rather than pinning it here.
 # Spark 4 needs Java 17, which ubuntu-latest carries.
-#
-# EXACT pins, because of Gluten: spark_session.py loads the Apache Gluten 1.7.0 Velox bundle for
-# Spark 4.0, which is compiled against Spark 4.0.2 and Delta 4.0.1 (the spark-4.0 profile in
-# Gluten's pom.xml at v1.7.0). Move these only together with GLUTEN_VERSION there.
 dbt-spark[session]
-pyspark==4.0.2
-delta-spark==4.0.1
+pyspark>=4.0,<4.1
+delta-spark>=4.0,<4.1

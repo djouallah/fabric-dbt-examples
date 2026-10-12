@@ -22,7 +22,7 @@ download_aemo.py                           one downloader, one landing zone, pla
 .github/scripts/parity.py                  proves the engines agree
 .github/scripts/check_catalog_stats.py     proves the published page is not empty
 .github/scripts/run_dbt.py                 every engine's build: build, 40613 resume, retry, fingerprint
-.github/scripts/spark_session.py           the spark leg's local PySpark session: output, Gluten, OneLake auth, metastore
+.github/scripts/spark_session.py           the spark leg's local PySpark session: OneLake auth, metastore
 .github/scripts/fabric_run.py              runs one engine in Fabric (the deployed pipeline)
 .github/scripts/tokens.py                  every script's token: notebookutils in Fabric, az elsewhere
 .github/scripts/onelake.py                 OneLake (or a folder) for the scripts: DuckDB + obstore
