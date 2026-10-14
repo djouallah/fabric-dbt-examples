@@ -414,19 +414,12 @@ probe stays as the place to try an adapter question cheaply.
   insert-only model is `append` plus an exclusion: the facts exclude files already folded
   (their `unique_key` starts with `file`, so that is the same operation), `fct_summary` and
   `dim_duid` anti-join `{{ this }}` on their keys.
-- **TIMESTAMP, not TIMESTAMPTZ.** Polars SQL has no zoned type by any spelling. The one type
-  difference from the other engines; the README says so.
-- **Polars SQL, verified on 2.0.0, and filed upstream where it is missing or wrong.** It
-  DOES take `GROUP BY ALL`, scalar and correlated subqueries, `YEAR()`, `INTERVAL 6 DAY` and
-  `first()`, so the polars copies keep the DuckDB text for those. What it forces:
-  - an unqualified column in an `IN (SELECT ...)` is resolved against the OUTER tables too and
-    called ambiguous: qualify it (pola-rs/polars#29876, bug);
-  - a `WITH` inside a derived table is not resolved; inside a CTE it is, which is where
-    `dbt.date_spine` goes (pola-rs/polars#29877, bug);
-  - no `current_date` / `current_timestamp` / `now()` by any spelling: `dbt.current_timestamp()`
-    renders the run's start as a literal (pola-rs/polars#28798);
-  - no zoned timestamp: TIMESTAMP where the others write TIMESTAMPTZ (pola-rs/polars#29878);
-  - no `generate_series` (pola-rs/polars#29879); no options on `read_csv()` (pola-rs/polars#29880).
+- **Polars main, not a release** (pola-rs/polars@769413ba3f, pinned in requirements/polars.txt),
+  for the SQL fixes 2.0.0 lacks: an unqualified column in `IN (SELECT ...)` (#29876), `WITH`
+  inside a derived table (#29877), `TIMESTAMPTZ` (#29878) and `generate_series` (#29879). So
+  the polars copies keep the DuckDB text for those too, TIMESTAMPTZ included. Still missing:
+  `current_date` / `current_timestamp` / `now()` by any spelling, so `dbt.current_timestamp()`
+  renders the run's start as a literal (pola-rs/polars#28798).
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`). Headerless reads name
   columns from `column_0` on Polars 2 -- irrelevant here, the padded `schema` names them.
 - **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any

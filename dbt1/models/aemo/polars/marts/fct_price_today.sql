@@ -27,12 +27,10 @@ SELECT
   {%- for name in aemo_cast_columns('price_today') %}
   CAST({{ name }} AS DOUBLE) AS {{ name }},
   {%- endfor %}
-  {#-- TIMESTAMP, not TIMESTAMPTZ: Polars SQL has no zoned timestamp by any spelling
-       (polars_smoke probes 20-22). The values are the same AEMO market times. --#}
-  CAST(SETTLEMENTDATE AS TIMESTAMP) AS SETTLEMENTDATE,
-  CAST(CAST(SETTLEMENTDATE AS TIMESTAMP) AS DATE) AS DATE,
+  CAST(SETTLEMENTDATE AS TIMESTAMPTZ) AS SETTLEMENTDATE,
+  CAST(CAST(SETTLEMENTDATE AS TIMESTAMPTZ) AS DATE) AS DATE,
   {{ parse_filename('filename') }} AS file,
-  CAST(YEAR(CAST(SETTLEMENTDATE AS TIMESTAMP)) AS INT) AS YEAR
+  CAST(YEAR(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) AS INT) AS YEAR
 FROM staging
 {% else %}
 -- No unprocessed files: an empty result keeps the existing data untouched.

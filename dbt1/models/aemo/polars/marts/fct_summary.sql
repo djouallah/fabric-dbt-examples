@@ -4,12 +4,8 @@
 -- Determinism contract, rebuild window and dispatch_duids: the iceberg copy's, verbatim --
 -- read that header for why each piece is there. Only what dbt-polars or Polars SQL forces
 -- differs, each marked at its site:
---   * insert-only by `append` + an anti-join on {{ this }} (the `insert_only` CTE at the
---     bottom): dbt-polars ignores merge_clauses, so the do-nothing merge would UPDATE;
---   * TIMESTAMP where the others cast TIMESTAMPTZ: Polars SQL has no zoned type
---     (pola-rs/polars#29878);
---   * the subqueries' columns qualified: Polars SQL resolves an unqualified name in an
---     IN-subquery against the outer tables too, and calls it ambiguous (pola-rs/polars#29876).
+--   * insert-only by `append` + an anti-join on {{ this }} (the LEFT JOIN at the bottom):
+--     dbt-polars ignores merge_clauses, so the do-nothing merge would UPDATE.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -43,7 +39,7 @@ rebuild_dates AS (
   -- Never seen before: archive backfill, or a first build catching up.
   SELECT DISTINCT s.DATE AS date FROM {{ ref('fct_scada') }} s
   WHERE s.INTERVENTION = 0
-    AND s.DATE NOT IN (SELECT DISTINCT t.date FROM {{ this }} t)
+    AND s.DATE NOT IN (SELECT DISTINCT date FROM {{ this }})
   UNION
   -- Recently settled: a date first written from the intraday feed is incomplete until
   -- its daily file lands, which is several days later if the pipeline missed a run — so
@@ -85,7 +81,7 @@ daily_summary AS (
     AND s.INITIALMW <> 0
     AND p.INTERVENTION = 0
     {% if scoped %}
-    AND s.DATE IN (SELECT rd.date FROM rebuild_dates rd)
+    AND s.DATE IN (SELECT date FROM rebuild_dates)
     {% endif %}
   GROUP BY ALL
 
@@ -107,8 +103,8 @@ daily_summary AS (
     s.INITIALMW <> 0
     AND p.INTERVENTION = 0
     -- Only units the daily branch will be able to reproduce once this date settles.
-    AND s.DUID IN (SELECT dd.DUID FROM dispatch_duids dd)
-    AND s.SETTLEMENTDATE > (SELECT MAX(CAST(sc.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }} sc)
+    AND s.DUID IN (SELECT DUID FROM dispatch_duids)
+    AND s.SETTLEMENTDATE > (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }})
   GROUP BY ALL
 ),
 
@@ -121,8 +117,8 @@ SELECT
   CAST(price AS DECIMAL(18, 4)) AS price,
   -- Provenance column only (see the iceberg copy).
   (SELECT GREATEST(
-    (SELECT MAX(CAST(sc.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada') }} sc),
-    COALESCE((SELECT MAX(CAST(st.SETTLEMENTDATE AS TIMESTAMP)) FROM {{ ref('fct_scada_today') }} st), CAST('1900-01-01' AS TIMESTAMP))
+    (SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada') }}),
+    COALESCE((SELECT MAX(CAST(SETTLEMENTDATE AS TIMESTAMPTZ)) FROM {{ ref('fct_scada_today') }}), CAST('1900-01-01' AS TIMESTAMPTZ))
   )) AS cutoff
 FROM daily_summary
 )

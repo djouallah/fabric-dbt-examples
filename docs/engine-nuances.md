@@ -14,7 +14,7 @@ and changed no model.
 |---|---|
 | spark | `to_timestamp(..., 'yyyy/MM/dd HH:mm:ss')`: Spark's `CAST(string AS TIMESTAMP)` returns `NULL` for slash dates instead of erroring, which silently nulled the whole column. DuckDB parses slashes, so only this leg was affected |
 | spark | no `DOUBLE PRECISION`, `date_format` for `strftime`, `TIMESTAMP` for `TIMESTAMPTZ` — the fingerprint macro carries a dialect branch for exactly this |
-| polars | Polars SQL has no zoned timestamp by any spelling (`TIMESTAMP` where the others write `TIMESTAMPTZ`), no `current_date` / `now()` (`dbt.current_timestamp()` renders the run's start as a literal), and resolves an unqualified column in `IN (SELECT ...)` against the outer tables too — so those columns are qualified. Column names are case-sensitive, unlike DuckDB |
+| polars | no `current_date` / `now()` in Polars SQL (`dbt.current_timestamp()` renders the run's start as a literal). Column names are case-sensitive, unlike DuckDB |
 | all | `DOUBLE → DECIMAL` tie-breaking is HALF_UP on Spark and HALF_EVEN on DuckDB, which is why `parity.py` gives the money columns a relative tolerance and exact-matches everything else |
 
 ## Feature implementation — what the engine, adapter or catalog will actually do

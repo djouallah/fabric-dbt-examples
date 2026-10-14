@@ -13,8 +13,7 @@ DuckDB has one process. What does show up, on every single model, is:
 
 1. **The SQL dialect.** `date_format` against `strftime`, `to_timestamp` with an explicit
    format because Spark's `CAST` turns a slash date into `NULL` rather than an error,
-   `DOUBLE PRECISION` that Spark rejects, no zoned timestamp and no `current_date` in Polars
-   SQL, two different ways to round a `DOUBLE` into a `DECIMAL`.
+   `DOUBLE PRECISION` that Spark rejects, no `current_date` in Polars SQL, two different ways to round a `DOUBLE` into a `DECIMAL`.
 2. **What each engine and adapter actually implements.** Which `MERGE` shapes the catalog
    accepts, whether the adapter honours `merge_clauses` or silently ignores them, how a CSV
    can be read at all, whether `--full-refresh` works, whether compaction is built in, what a

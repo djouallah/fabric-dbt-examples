@@ -18,7 +18,7 @@ layer** on five engines, every one of them writing into one shared OneLake lakeh
 | `iceberg` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | Iceberg, through the OneLake Iceberg REST catalog |
 | `ducklake` | [`dbt-duckdb`](https://github.com/duckdb/dbt-duckdb) | DuckLake parquet + a Delta export, catalog in a Fabric SQL DB |
 | `spark` | [`dbt-spark`](https://github.com/dbt-labs/dbt-adapters/tree/main/dbt-spark) (`method: session`) | Delta on OneLake, via local PySpark + delta-spark on the runner |
-| `polars` | [`dbt-polars`](https://github.com/datamindedbe/incubator-dbt-polars), from [a fork](https://github.com/djouallah/incubator-dbt-polars/tree/aemo) until its fixes are released | Iceberg, through the OneLake Iceberg REST catalog (pyiceberg). Timestamps are tz-naive: Polars SQL has no zoned type |
+| `polars` | [`dbt-polars`](https://github.com/datamindedbe/incubator-dbt-polars), from [a fork](https://github.com/djouallah/incubator-dbt-polars/tree/aemo) until its fixes are released | Iceberg, through the OneLake Iceberg REST catalog (pyiceberg) |
 
 None is supported by Microsoft; they are here to show that the business logic is portable.
 
