@@ -435,20 +435,21 @@ def probes(ctx):
     # 0 and so the first line's width; not truncate_ragged_lines, which drops the extra fields.
     # Types are inferred, so the record filter casts. Graded on WIDTH too: column_52 must exist
     # and be filled on the DUNIT rows, which a 25-wide read cannot do.
-    for key, path, files in (("f_read_csv_wide", (one or {}).get("abfss", ""), None),
-                             ("f_read_csv_wide_list", glob_abfss(), two)):
-        narrow = ("" if files is None else
-                  " and split_part(filename, '/', -1) in ("
-                  + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in files) + ")")
+    # ONE read_csv() PER FILE, joined by UNION ALL: over the folder glob, the whole-file
+    # inference ran past the step's 20 minutes before the filename filter applied (run
+    # 38653690208). The fact models render the picker's list the same way.
+    for key, files in (("f_read_csv_wide", [one] if one else []), ("f_read_csv_wide_list", two)):
+        reads = " union all ".join(
+            "select filename, column_52 as c52 from read_csv('" + f["abfss"] + "', "
+            + READ_CSV_WIDE_SQL + ") where " + DUNIT0_CAST for f in files)
         out.append((len(out) + 1,
                     "landed AEMO CSV, read_csv() widest-row read"
-                    + (" over the folder, filtered to a file list" if files else ""),
+                    + (", one per file, UNION ALL" if key.endswith("list") else ""),
                     "has_header => false, infer_schema_length => NULL: every DUNIT field kept",
-                    {key: "{{ config(materialized='table') }}\nselect filename, column_52 as c52 "
-                          "from read_csv('" + path + "', " + READ_CSV_WIDE_SQL + ") where "
-                          + DUNIT0_CAST + narrow}
-                    if (one if files is None else len(two) >= 2) else None,
-                    [None], (lambda k, f: lambda c: expect_dunit_wide(c, k, f))(key, files)))
+                    {key: "{{ config(materialized='table') }}\nselect * from (" + reads + ") as t"}
+                    if (len(files) >= (2 if key.endswith("list") else 1)) else None,
+                    [None], (lambda k, f: lambda c: expect_dunit_wide(c, k, f))(
+                        key, files if key.endswith("list") else None)))
     return out
 
 
