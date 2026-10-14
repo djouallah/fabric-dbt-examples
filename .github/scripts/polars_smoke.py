@@ -255,6 +255,11 @@ READ_CSV_OPTIONS_SQL = ("has_header => false, skip_rows => 1, infer_schema => fa
                         "infer_schema_length => NULL, truncate_ragged_lines => true, "
                         "include_file_paths => 'filename'")
 
+# The ragged read as pola-rs/polars#29917 documents it for this case: the width from the widest
+# row. try_parse_dates off, so the AEMO dates stay the strings the models parse.
+READ_CSV_WIDE_SQL = ("has_header => false, skip_rows => 1, infer_schema_length => NULL, "
+                     "try_parse_dates => false, include_file_paths => 'filename'")
+
 RUN_QUERY_SQL = """
 {%- if execute -%}
 {%- set r = run_query("select 42 as n") -%}
@@ -267,6 +272,9 @@ select {{ n }} as rows_returned, {{ v }} as value
 DUNIT = "column_1 = 'D' and column_2 = 'DUNIT' and column_4 = '3'"
 # The same record in a headerless Polars 2 read, which numbers its columns from column_0.
 DUNIT0 = "column_0 = 'D' and column_1 = 'DUNIT' and column_3 = '3'"
+# The same filter on inferred types: column_3 (the record version) reads as an integer.
+DUNIT0_CAST = ("cast(column_0 as varchar) = 'D' and cast(column_1 as varchar) = 'DUNIT' "
+               "and cast(column_3 as varchar) = '3'")
 
 
 def glob_abfss():
@@ -422,6 +430,25 @@ def probes(ctx):
                                          + ") and " + DUNIT0 + " group by filename"}
                 if len(two) >= 2 else None,
                 [None], lambda c: expect_dunit(c, "f_read_csv_opts_list", two)))
+    # THE ISSUE'S FORM (pola-rs/polars#29917): no header and infer_schema_length => NULL, so the
+    # width is the widest row's. Not infer_schema => false, which sets the inference length to
+    # 0 and so the first line's width; not truncate_ragged_lines, which drops the extra fields.
+    # Types are inferred, so the record filter casts. Graded on WIDTH too: column_52 must exist
+    # and be filled on the DUNIT rows, which a 25-wide read cannot do.
+    for key, path, files in (("f_read_csv_wide", (one or {}).get("abfss", ""), None),
+                             ("f_read_csv_wide_list", glob_abfss(), two)):
+        narrow = ("" if files is None else
+                  " and split_part(filename, '/', -1) in ("
+                  + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in files) + ")")
+        out.append((len(out) + 1,
+                    "landed AEMO CSV, read_csv() widest-row read"
+                    + (" over the folder, filtered to a file list" if files else ""),
+                    "has_header => false, infer_schema_length => NULL: every DUNIT field kept",
+                    {key: "{{ config(materialized='table') }}\nselect filename, column_52 as c52 "
+                          "from read_csv('" + path + "', " + READ_CSV_WIDE_SQL + ") where "
+                          + DUNIT0_CAST + narrow}
+                    if (one if files is None else len(two) >= 2) else None,
+                    [None], (lambda k, f: lambda c: expect_dunit_wide(c, k, f))(key, files)))
     return out
 
 
@@ -522,6 +549,21 @@ def expect_dunit_by_position(ctx, name, files=None):
     detail = (f"DUNIT rows {got}, a padded read gives {truth}; {len(cols)} columns named "
               f"{cols[0]}..{cols[-1]}; {full}")
     return ("PASS" if got == truth and len(cols) >= 53 else "FAIL"), detail
+
+
+def expect_dunit_wide(ctx, name, files=None):
+    """DUNIT rows counted against the padded read, and their 53rd field filled."""
+    import polars as pl
+    rows, _ = table_rows(ctx, name)
+    truth = sum(padded_scan(f["abfss"])
+                .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
+                        & (pl.col("column_4") == "3"))
+                .select(pl.len()).collect().item()
+                for f in (files or [ctx["daily_file"]]))
+    filled = sum(1 for r in rows if r["c52"] is not None)
+    detail = (f"DUNIT rows {len(rows)}, a padded read gives {truth}; 53rd field filled on "
+              f"{filled}")
+    return ("PASS" if rows and len(rows) == truth and filled == len(rows) else "FAIL"), detail
 
 
 def expect_total_rows(ctx, name, files):
