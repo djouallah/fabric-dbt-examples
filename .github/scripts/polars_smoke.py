@@ -210,6 +210,14 @@ SHAPES = {
                          "cast('2026-01-10' as date), interval 1 day)) as date",
     "s_date_spine": "{{ dbt.date_spine('day', \"cast('2026-01-01' as date)\", "
                     "\"cast('2026-01-10' as date)\") }}",
+    # pola-rs/polars#29876, #29877: the two SQL scoping bugs the polars models work around.
+    "s_in_subquery_unqualified": "select a.k from (select 1 as k union all select 2 as k) as a "
+                                 "where a.k in (select k from (select 1 as k) as b)",
+    "s_with_in_derived": "select k from (with x as (select 1 as k) select k from x) as t",
+    # dim_calendar as the DuckDB legs write it: generate_series in a derived table, no alias.
+    "s_generate_series_derived": "select cast(date as date) as date from (select unnest("
+                                 "generate_series(cast('2026-01-01' as date), "
+                                 "cast('2026-01-03' as date), interval 1 day)) as date)",
     "s_window": "select k, row_number() over (partition by k % 2 order by v desc) as rn from "
                 "(select 1 as k, 10 as v union all select 2 as k, 20 as v "
                 "union all select 3 as k, 30 as v) as t",
@@ -241,8 +249,11 @@ select k, v from (
 
 # The ragged read the DuckDB legs do in duckdb_read_csv(), spelled as Polars SQL named
 # arguments. Whether Polars SQL read_csv() takes ANY option is the question.
+# `infer_schema_length => NULL` takes the width from the widest row, not the first: the padding
+# the 131-column `schema` gives the sources (pola-rs/polars#29917).
 READ_CSV_OPTIONS_SQL = ("has_header => false, skip_rows => 1, infer_schema => false, "
-                        "truncate_ragged_lines => true, include_file_paths => 'filename'")
+                        "infer_schema_length => NULL, truncate_ragged_lines => true, "
+                        "include_file_paths => 'filename'")
 
 RUN_QUERY_SQL = """
 {%- if execute -%}
