@@ -399,17 +399,17 @@ probe stays as the place to try an adapter question cheaply.
   on PRs), merge into `aemo`, re-pin. Never push to `datamindedbe`. Today: #29 (a source can
   name `.CSV`), dtype names in `read_options`, and `run-operation` resolving a `ref()` (the
   parity fingerprint; run-operation never populates the adapter cache).
-- **The landed CSVs are read with Polars SQL `read_csv()`**, with options (Polars main,
-  pola-rs/polars#29917): no header, every column a String, ragged rows kept, the width taken
-  from the WIDEST row (`infer_schema_length => NULL`) — a read that takes the first line's
-  width cuts every wider record down (a DUNIT row came back 25 wide). Columns are named from
-  `column_0`; `macros/polars_read_csv.sql` binds the spec BY POSITION from them. The credential
-  is `AZURE_STORAGE_TOKEN`, which run_dbt.py copies from `ONELAKE_TOKEN`: `read_csv()` takes
-  none. The archive log and dim_duid's reference files are still sources.
+- **Files are read as SOURCES, padded to 131 String columns.** Polars SQL `read_csv()` takes a
+  path and no options, so the ragged AEMO files can only be read through a source's
+  `read_options`. A headerless read takes its width from the FIRST line and
+  `truncate_ragged_lines` then cuts every wider record down (a DUNIT row came back 25 wide), so
+  the source's `schema` names 131 columns — which needs the fork's dtype-name fix, and
+  `missing_columns: insert` on Polars 2. `macros/polars_read_csv.sql` binds the spec BY
+  POSITION from those `column_<i>`.
 - **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
   the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
   same `process_limit` — and renders the list as `filename IN (...)` on the folder's glob
-  read. dbt-polars raises on any hook that renders SQL; on-run hooks are silently skipped.
+  source. dbt-polars raises on any hook that renders SQL; on-run hooks are silently skipped.
 - **`merge_clauses` is IGNORED, silently.** A do-nothing merge UPDATES matched rows. Every
   insert-only model is `append` plus an exclusion: the facts exclude files already folded
   (their `unique_key` starts with `file`, so that is the same operation), `fct_summary` and
@@ -420,7 +420,8 @@ probe stays as the place to try an adapter question cheaply.
   the polars copies keep the DuckDB text for those too, TIMESTAMPTZ included. Still missing:
   `current_date` / `current_timestamp` / `now()` by any spelling, so `dbt.current_timestamp()`
   renders the run's start as a literal (pola-rs/polars#28798).
-  Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`).
+  Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`). Headerless reads name
+  columns from `column_0` on Polars 2 -- irrelevant here, the padded `schema` names them.
 - **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any
   more, so the deltalake clash (djouallah/duckrun#83) cannot reach it. On the runner, a large
   `process_limit` exhausts Polars' out-of-core disk budget in `fct_scada` before it exhausts

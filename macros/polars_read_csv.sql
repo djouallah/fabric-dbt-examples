@@ -1,26 +1,26 @@
 {#-- The polars engine's counterpart of duckdb_read_csv.sql: how its fact models read the
      landed AEMO CSVs. Same spec (aemo_columns.sql), same record rule, same file choice --
-     only the mechanics differ:
+     only the mechanics differ, because dbt-polars has neither a read_csv() with options nor
+     SQL hooks:
 
-       * THE READ is Polars SQL read_csv() over the landing folder's glob, with the options
-         duckdb_read_csv passes: no header, every column a String, ragged rows kept. Its width
-         comes from the WIDEST row (`infer_schema_length => NULL`), not the first: a read that
-         takes the first line's width cuts every wider record down -- a DUNIT row came back 25
-         fields wide instead of 53 (polars_smoke run 38121051083). Options need Polars main
-         (pola-rs/polars#29917); polars_smoke run 38644172037 matched the padded row counts.
-         A headerless Polars 2 read names its columns from column_0. The credential comes from
-         AZURE_STORAGE_TOKEN, which run_dbt.py sets: read_csv() takes none.
+       * THE READ is a dbt source per landing folder (models/aemo/polars/_sources.yml) whose
+         read_options pad every row to 131 String columns named column_1..column_131 -- the
+         widest AEMO record (DREGION) plus one. A headerless Polars read otherwise takes its
+         width from the FIRST line and truncate_ragged_lines cuts every wider record down to
+         it: a DUNIT row came back 25 fields wide instead of 53 (polars_smoke run 38121051083).
+         The padded `schema` needs dtype NAMES resolved by the adapter -- the fork's
+         fix/read-options-dtype-names; see requirements/polars.txt.
        * THE FILE CHOICE happens at parse time with run_query, where the DuckDB legs use a
          `SET VARIABLE` pre_hook: dbt-polars refuses SQL hooks ("there is no database to run
          them on"). The query is the same one, newest first, and the list is rendered into the
-         model as a `filename IN (...)` on the folder's glob. --#}
+         model as a `filename IN (...)` on the folder's glob source. --#}
 
 
-{#-- column_<i> AS <spec name>, in file order from column_0: the spec binds BY POSITION, as on
-     every engine (aemo_columns.sql: "Column ORDER is load-bearing"). --#}
+{#-- column_<i> AS <spec name>, in file order: the spec binds BY POSITION, as on every
+     engine (aemo_columns.sql: "Column ORDER is load-bearing"). --#}
 {% macro polars_csv_columns(record) %}
   {%- for name in aemo_columns(record) %}
-    column_{{ loop.index0 }} AS {{ name }}{{ "," if not loop.last }}
+    column_{{ loop.index }} AS {{ name }}{{ "," if not loop.last }}
   {%- endfor %}
 {% endmacro %}
 
@@ -59,16 +59,14 @@
 {% endmacro %}
 
 
-{#-- The staging read for one record: the landing folder's glob, narrowed to `files`, columns
+{#-- The staging read for one record: the padded glob source, narrowed to `files`, columns
      named from the spec, filtered to the record. --#}
-{% macro polars_staging(record, folder, files) %}
+{% macro polars_staging(record, source_name, files) %}
   SELECT * FROM (
     SELECT
       {{- polars_csv_columns(record) }},
       filename
-    FROM read_csv('{{ get_csv_archive_path() }}/{{ folder }}/*.CSV',
-      has_header => false, skip_rows => 1, infer_schema => false, infer_schema_length => NULL,
-      truncate_ragged_lines => true, include_file_paths => 'filename')
+    FROM {{ source(source_name, 'csv') }}
     {%- if files is not none %}
     WHERE split_part(filename, '/', -1) IN ('{{ files | join("', '") }}')
     {%- endif %}

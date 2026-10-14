@@ -78,12 +78,6 @@ os.environ.setdefault(
 )
 os.makedirs(os.environ["DUCKDB_TEMP_DIR"], exist_ok=True)
 
-# POLARS SQL read_csv() TAKES NO CREDENTIALS. The polars fact models read the landed CSVs with
-# it (macros/polars_read_csv.sql), and Polars reaches OneLake from them only through
-# AZURE_STORAGE_TOKEN. It is ONELAKE_TOKEN, which both modes already put in the environment.
-if engine == "polars" and os.environ.get("ONELAKE_TOKEN"):
-    os.environ.setdefault("AZURE_STORAGE_TOKEN", os.environ["ONELAKE_TOKEN"])
-
 # NOTHING IS POPPED OUT OF THE ENVIRONMENT HERE. This script used to delete
 # AZURE_TRANSPORT_OPTION_TYPE and CURL_CA_INFO as belt and braces -- inside Fabric DuckDB's
 # default OneLake transport is the one that works -- which is the OPPOSITE of true on a GitHub

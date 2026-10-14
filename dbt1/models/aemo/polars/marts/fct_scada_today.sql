@@ -19,7 +19,7 @@
 
 {% if files is none or files | length > 0 %}
 WITH staging AS (
-  {{ polars_staging('scada_today', 'scada_today', files) }}
+  {{ polars_staging('scada_today', 'polars_scada_today', files) }}
 )
 
 SELECT
