@@ -19,7 +19,7 @@
 
 {% if files is none or files | length > 0 %}
 WITH staging AS (
-  {{ polars_staging('scada', 'polars_daily', files) }}
+  {{ polars_staging('scada', 'daily', files) }}
 )
 
 SELECT

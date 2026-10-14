@@ -3,8 +3,8 @@
 # djouallah/incubator-dbt-polars, branch `aemo` -- an integration branch: every fix this
 # project needs, each also on a branch of its own for its upstream PR:
 #   fix/source-file-extension    a source can name a `.CSV` file (dbt-polars#29, PR #30)
-#   fix/read-options-dtype-names  read_options can name dtypes (`schema: {a: String}`), which
-#                                 the padded read in macros/polars_read_csv.sql needs
+#   fix/read-options-dtype-names  read_options can name dtypes (`schema: {a: String}`): no
+#                                 longer used, the CSVs are read with read_csv() options
 #   fix/run-operation-ref         run-operation can read a ref(), which the parity
 #                                 fingerprint needs (it never populates the adapter cache)
 # Pinned by COMMIT, so a push to the branch cannot change what a run installs. Re-pin after

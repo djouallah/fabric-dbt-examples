@@ -4,19 +4,13 @@ version: 2
 # OneLake -- see dbt1/profiles.yml and AGENTS.md). Every other engine reads these files with
 # its own reader; dbt-polars reads files only as sources.
 #
-# The CSV folders are read whole, as `*.CSV`, padded to 131 String columns: see
-# macros/polars_read_csv.sql. The fact models narrow each to the files they picked with a
-# `filename IN (...)` filter. An identifier that keeps its `.CSV` needs dbt-polars#29, and the
-# padded `schema` the fork's dtype-name fix -- requirements/polars.txt pins both.
-#
-# `missing_columns: insert` is Polars 2's spelling of "pad the short rows": without it a
-# schema wider than the first line is an error.
+# The landed AEMO CSV folders are NOT sources: the fact models read them with Polars SQL
+# read_csv() (macros/polars_read_csv.sql). An identifier that keeps its extension needs
+# dbt-polars#29, which requirements/polars.txt pins.
 #
 # `database` is the polars catalog name on polars and EMPTY on every other target: these
 # sources are gated off there, but dbt still builds their relations at parse, and dbt-spark
 # refuses any relation with a database ("Cannot set database in spark!").
-#
-# GENERATED SHAPE: the `schema` maps are 131 identical entries; regenerate rather than edit.
 
 sources:
   - name: polars_landing
@@ -28,39 +22,6 @@ sources:
         identifier: csv_raw_archive_log
         config:
           file_format: parquet
-
-  - name: polars_daily
-    description: PUBLIC_DAILY files, folded by fct_price and fct_scada.
-    database: "{{ 'landing' if target.type == 'polars' else '' }}"
-    schema: Files/csv_raw/daily
-    tables:
-      - name: csv
-        identifier: "*.CSV"
-        config:
-          file_format: csv
-          read_options: {has_header: false, skip_rows: 1, truncate_ragged_lines: true, include_file_paths: filename, ignore_errors: true, missing_columns: insert, schema: {column_1: String, column_2: String, column_3: String, column_4: String, column_5: String, column_6: String, column_7: String, column_8: String, column_9: String, column_10: String, column_11: String, column_12: String, column_13: String, column_14: String, column_15: String, column_16: String, column_17: String, column_18: String, column_19: String, column_20: String, column_21: String, column_22: String, column_23: String, column_24: String, column_25: String, column_26: String, column_27: String, column_28: String, column_29: String, column_30: String, column_31: String, column_32: String, column_33: String, column_34: String, column_35: String, column_36: String, column_37: String, column_38: String, column_39: String, column_40: String, column_41: String, column_42: String, column_43: String, column_44: String, column_45: String, column_46: String, column_47: String, column_48: String, column_49: String, column_50: String, column_51: String, column_52: String, column_53: String, column_54: String, column_55: String, column_56: String, column_57: String, column_58: String, column_59: String, column_60: String, column_61: String, column_62: String, column_63: String, column_64: String, column_65: String, column_66: String, column_67: String, column_68: String, column_69: String, column_70: String, column_71: String, column_72: String, column_73: String, column_74: String, column_75: String, column_76: String, column_77: String, column_78: String, column_79: String, column_80: String, column_81: String, column_82: String, column_83: String, column_84: String, column_85: String, column_86: String, column_87: String, column_88: String, column_89: String, column_90: String, column_91: String, column_92: String, column_93: String, column_94: String, column_95: String, column_96: String, column_97: String, column_98: String, column_99: String, column_100: String, column_101: String, column_102: String, column_103: String, column_104: String, column_105: String, column_106: String, column_107: String, column_108: String, column_109: String, column_110: String, column_111: String, column_112: String, column_113: String, column_114: String, column_115: String, column_116: String, column_117: String, column_118: String, column_119: String, column_120: String, column_121: String, column_122: String, column_123: String, column_124: String, column_125: String, column_126: String, column_127: String, column_128: String, column_129: String, column_130: String, column_131: String}}
-
-  - name: polars_scada_today
-    description: Intraday DISPATCHSCADA files, folded by fct_scada_today.
-    database: "{{ 'landing' if target.type == 'polars' else '' }}"
-    schema: Files/csv_raw/scada_today
-    tables:
-      - name: csv
-        identifier: "*.CSV"
-        config:
-          file_format: csv
-          read_options: {has_header: false, skip_rows: 1, truncate_ragged_lines: true, include_file_paths: filename, ignore_errors: true, missing_columns: insert, schema: {column_1: String, column_2: String, column_3: String, column_4: String, column_5: String, column_6: String, column_7: String, column_8: String, column_9: String, column_10: String, column_11: String, column_12: String, column_13: String, column_14: String, column_15: String, column_16: String, column_17: String, column_18: String, column_19: String, column_20: String, column_21: String, column_22: String, column_23: String, column_24: String, column_25: String, column_26: String, column_27: String, column_28: String, column_29: String, column_30: String, column_31: String, column_32: String, column_33: String, column_34: String, column_35: String, column_36: String, column_37: String, column_38: String, column_39: String, column_40: String, column_41: String, column_42: String, column_43: String, column_44: String, column_45: String, column_46: String, column_47: String, column_48: String, column_49: String, column_50: String, column_51: String, column_52: String, column_53: String, column_54: String, column_55: String, column_56: String, column_57: String, column_58: String, column_59: String, column_60: String, column_61: String, column_62: String, column_63: String, column_64: String, column_65: String, column_66: String, column_67: String, column_68: String, column_69: String, column_70: String, column_71: String, column_72: String, column_73: String, column_74: String, column_75: String, column_76: String, column_77: String, column_78: String, column_79: String, column_80: String, column_81: String, column_82: String, column_83: String, column_84: String, column_85: String, column_86: String, column_87: String, column_88: String, column_89: String, column_90: String, column_91: String, column_92: String, column_93: String, column_94: String, column_95: String, column_96: String, column_97: String, column_98: String, column_99: String, column_100: String, column_101: String, column_102: String, column_103: String, column_104: String, column_105: String, column_106: String, column_107: String, column_108: String, column_109: String, column_110: String, column_111: String, column_112: String, column_113: String, column_114: String, column_115: String, column_116: String, column_117: String, column_118: String, column_119: String, column_120: String, column_121: String, column_122: String, column_123: String, column_124: String, column_125: String, column_126: String, column_127: String, column_128: String, column_129: String, column_130: String, column_131: String}}
-
-  - name: polars_price_today
-    description: Intraday DISPATCHIS price files, folded by fct_price_today.
-    database: "{{ 'landing' if target.type == 'polars' else '' }}"
-    schema: Files/csv_raw/price_today
-    tables:
-      - name: csv
-        identifier: "*.CSV"
-        config:
-          file_format: csv
-          read_options: {has_header: false, skip_rows: 1, truncate_ragged_lines: true, include_file_paths: filename, ignore_errors: true, missing_columns: insert, schema: {column_1: String, column_2: String, column_3: String, column_4: String, column_5: String, column_6: String, column_7: String, column_8: String, column_9: String, column_10: String, column_11: String, column_12: String, column_13: String, column_14: String, column_15: String, column_16: String, column_17: String, column_18: String, column_19: String, column_20: String, column_21: String, column_22: String, column_23: String, column_24: String, column_25: String, column_26: String, column_27: String, column_28: String, column_29: String, column_30: String, column_31: String, column_32: String, column_33: String, column_34: String, column_35: String, column_36: String, column_37: String, column_38: String, column_39: String, column_40: String, column_41: String, column_42: String, column_43: String, column_44: String, column_45: String, column_46: String, column_47: String, column_48: String, column_49: String, column_50: String, column_51: String, column_52: String, column_53: String, column_54: String, column_55: String, column_56: String, column_57: String, column_58: String, column_59: String, column_60: String, column_61: String, column_62: String, column_63: String, column_64: String, column_65: String, column_66: String, column_67: String, column_68: String, column_69: String, column_70: String, column_71: String, column_72: String, column_73: String, column_74: String, column_75: String, column_76: String, column_77: String, column_78: String, column_79: String, column_80: String, column_81: String, column_82: String, column_83: String, column_84: String, column_85: String, column_86: String, column_87: String, column_88: String, column_89: String, column_90: String, column_91: String, column_92: String, column_93: String, column_94: String, column_95: String, column_96: String, column_97: String, column_98: String, column_99: String, column_100: String, column_101: String, column_102: String, column_103: String, column_104: String, column_105: String, column_106: String, column_107: String, column_108: String, column_109: String, column_110: String, column_111: String, column_112: String, column_113: String, column_114: String, column_115: String, column_116: String, column_117: String, column_118: String, column_119: String, column_120: String, column_121: String, column_122: String, column_123: String, column_124: String, column_125: String, column_126: String, column_127: String, column_128: String, column_129: String, column_130: String, column_131: String}}
 
   - name: polars_duid
     description: The reference CSVs dim_duid reads. They have headers.
