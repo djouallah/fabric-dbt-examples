@@ -265,6 +265,8 @@ select {{ n }} as rows_returned, {{ v }} as value
 """
 
 DUNIT = "column_1 = 'D' and column_2 = 'DUNIT' and column_4 = '3'"
+# The same record in a headerless Polars 2 read, which numbers its columns from column_0.
+DUNIT0 = "column_0 = 'D' and column_1 = 'DUNIT' and column_3 = '3'"
 
 
 def glob_abfss():
@@ -341,7 +343,7 @@ def probes(ctx):
          "the ragged read duckdb_read_csv() does: no header, all String, ragged rows, filename",
          {"f_read_csv_opts": "{{ config(materialized='table') }}\nselect filename, count(*) as n "
                              "from read_csv('" + (one or {}).get("abfss", "") + "', "
-                             + READ_CSV_OPTIONS_SQL + ") where " + DUNIT + " group by filename"}
+                             + READ_CSV_OPTIONS_SQL + ") where " + DUNIT0 + " group by filename"}
          if one else None,
          [None], lambda c: expect_dunit(c, "f_read_csv_opts")),
         (13, "landed AEMO CSV, Polars SQL read_csv() defaults",
@@ -406,6 +408,20 @@ def probes(ctx):
                                  + ")"}
                 if len(two) >= 2 else None,
                 [None], lambda c: expect_dunit_by_position(c, "f_daily_list", two)))
+    # How the fact models would read with read_csv() options instead of the padded source: the
+    # folder glob, narrowed to the files the picker chose, DUNIT rows counted per file.
+    out.append((len(out) + 1, "landed AEMO CSV, read_csv() with options over the folder, "
+                "filtered to a file list",
+                "the padded source replaced by Polars SQL read_csv() (pola-rs/polars#29917)",
+                {"f_read_csv_opts_list": "{{ config(materialized='table') }}\nselect filename, "
+                                         "count(*) as n from read_csv('" + glob_abfss() + "', "
+                                         + READ_CSV_OPTIONS_SQL + ") where "
+                                         "split_part(filename, '/', -1) in ("
+                                         + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'"
+                                                     for f in two)
+                                         + ") and " + DUNIT0 + " group by filename"}
+                if len(two) >= 2 else None,
+                [None], lambda c: expect_dunit(c, "f_read_csv_opts_list", two)))
     return out
 
 
