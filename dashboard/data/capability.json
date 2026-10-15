@@ -10,7 +10,7 @@
         "iceberg": {"o": "native", "n": "dbt-duckdb merge_clauses do_nothing.", "path": "dbt1/models/aemo/iceberg/marts/fct_scada.sql"},
         "ducklake": {"o": "native", "n": "dbt-duckdb merge_clauses do_nothing.", "path": "dbt1/models/aemo/ducklake/marts/fct_scada.sql"},
         "spark": {"o": "workaround", "n": "dbt-spark merges update + insert: a matched key updates. That only happens when two runs fold the same file.", "path": "dbt1/models/aemo/spark/marts/fct_scada.sql"},
-        "polars": {"o": "workaround", "silent": true, "n": "dbt-polars ignores merge_clauses, so a do-nothing merge UPDATES matched rows. Here: append, excluding files already folded.", "path": "dbt1/models/aemo/polars/marts/fct_scada.sql"}
+        "polars": {"o": "workaround", "n": "dbt-polars has no merge_clauses (dbt-polars#32): up to 0.3.1 it was silently ignored and a do-nothing merge UPDATED matched rows; 0.4.0 rejects it. Here: append, excluding files already folded.", "path": "dbt1/models/aemo/polars/marts/fct_scada.sql"}
       }
     },
     {
@@ -21,7 +21,7 @@
         "iceberg": {"o": "no", "n": "The OneLake Iceberg catalog rejects data files + delete files in one commit: BadRequest 400, \"Only one instance of each update type is allowed per request\"."},
         "ducklake": {"o": "native", "n": "DuckLake can. fct_summary gives it up so the three DuckDB trees run one config.", "path": "dbt1/models/aemo/ducklake/marts/fct_summary.sql"},
         "spark": {"o": "native", "n": "Delta MERGE.", "path": "dbt1/models/aemo/spark/marts/fct_summary.sql"},
-        "polars": {"o": "native", "n": "Matched rows update whether asked or not: merge_clauses is ignored."}
+        "polars": {"o": "native", "n": "A merge updates matched rows; there is no clause to ask it not to."}
       }
     },
     {
@@ -65,7 +65,7 @@
         "iceberg": {"o": "native", "n": "Used for the file list."},
         "ducklake": {"o": "native", "n": "Used for the file list, compaction and delta_export().", "path": "dbt1/dbt_project.yml"},
         "spark": {"o": "native", "n": "Used for the CSV stage table.", "path": "dbt1/macros/spark_read_csv.sql"},
-        "polars": {"o": "no", "silent": true, "n": "dbt-polars raises on a hook that renders SQL; on-run-end hooks report OK without running (dbt-polars#36)."}
+        "polars": {"o": "no", "n": "dbt-polars runs no SQL hooks. Since 0.4.0 a hook that renders SQL fails with an error; before, an on-run-end hook reported OK without running (dbt-polars#36)."}
       }
     },
     {

@@ -3,7 +3,7 @@
 # dbt-polars as released, no fork: the models read every landed file with Polars SQL table
 # functions (read_csv / read_parquet), so no source needs an adapter patch, and run_dbt.py takes
 # the parity fingerprint with `dbt show`, which resolves a ref() where run-operation cannot.
-dbt-polars[iceberg]==0.3.1
+dbt-polars[iceberg]==0.4.0
 # POLARS MAIN, pola-rs/polars@769413ba3f (lakehouse_benchmark's tmp_polars_main.yml build), until
 # a release has what the models use: read_csv() options (#29917), TIMESTAMPTZ (#29878),
 # generate_series (#29879), and the IN-subquery and nested-WITH scoping fixes (#29876, #29877).

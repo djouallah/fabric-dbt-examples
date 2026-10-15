@@ -408,8 +408,12 @@ probe stays as the place to try an adapter question cheaply.
 - **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
   the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
   same `process_limit` — and each file it lists becomes one `read_csv()` in the model.
-  dbt-polars raises on any hook that renders SQL; on-run hooks are silently skipped.
-- **`merge_clauses` is IGNORED, silently.** A do-nothing merge UPDATES matched rows. Every
+  dbt-polars runs no SQL hooks: since 0.4.0 any hook that renders SQL is an error (before
+  that, on-run hooks were silently skipped — dbt-polars#36). Every hook in `dbt_project.yml`
+  is gated to render NOTHING on the polars target, and must stay so.
+- **`merge_clauses` is NOT SUPPORTED** (dbt-polars#32, open). Up to 0.3.1 it was silently
+  ignored and a do-nothing merge UPDATED matched rows; 0.4.0 rejects it, like every unknown
+  model config key — so a polars model may carry only config keys dbt-polars knows. Every
   insert-only model is `append` plus an exclusion: the facts exclude files already folded
   (their `unique_key` starts with `file`, so that is the same operation), `fct_summary` and
   `dim_duid` anti-join `{{ this }}` on their keys.

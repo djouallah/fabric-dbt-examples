@@ -26,17 +26,17 @@
       "repo": "https://github.com/datamindedbe/incubator-dbt-polars",
       "engines": ["polars"],
       "items": [
-        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/32", "id": "#32", "status": "open", "kind": "bug", "silent": true,
-         "text": "merge_clauses is ignored: do_nothing on match still updates the row."},
-        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/34", "id": "#34", "status": "open", "kind": "bug", "silent": true,
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/32", "id": "#32", "status": "open", "kind": "gap",
+         "text": "merge_clauses is not supported. Up to 0.3.1 it was silently ignored and do_nothing on match still updated the row; since 0.4.0 it is rejected as an unknown config key. Kept open for real support."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/34", "id": "#34", "status": "fixed in 0.4.0", "kind": "bug", "silent": true,
          "text": "Unknown read_options keys are silently dropped: a misspelled option just vanishes."},
-        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/36", "id": "#36", "status": "open", "kind": "bug", "silent": true,
-         "text": "on-run-end hooks report OK without running."},
-        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/29", "id": "#29", "status": "open", "kind": "bug",
-         "text": "A file source path always ends in lower-case .csv, so a .CSV file cannot be a source.",
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/36", "id": "#36", "status": "fixed in 0.4.0", "kind": "bug", "silent": true,
+         "text": "on-run-end hooks reported OK without running. A hook with SQL now fails with an error."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/29", "id": "#29", "status": "fixed in 0.4.0", "kind": "bug",
+         "text": "A file source path always ended in lower-case .csv, so a .CSV file could not be a source. 0.4.0 reads a source from external.location, any extension or a glob.",
          "extra": {"url": "https://github.com/datamindedbe/incubator-dbt-polars/pull/30", "id": "PR #30"}}
       ],
-      "here": "dbt-polars as released, no fork: append instead of merge, and every file read with Polars SQL read_csv() instead of a source."
+      "here": "On 0.4.0, as released, no fork. Still append instead of merge (#32), and every file read with Polars SQL read_csv()."
     },
     {
       "name": "duckdb-iceberg",
