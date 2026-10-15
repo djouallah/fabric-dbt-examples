@@ -276,12 +276,6 @@ def main() -> int:
         # The same Iceberg REST catalog as iceberg, through pyiceberg.
         emit("WAREHOUSE_PATH", f"{WS}/{data_id}")
         emit("ONELAKE_ENDPOINT", "https://onelake.table.fabric.microsoft.com/iceberg")
-        # dbt-polars reads the landing zone through an `azure` catalog, which wants the
-        # container (the workspace) and the prefix (the landing item) apart rather than as one
-        # abfss URL. Keys of their own: FILES_PATH is never re-emitted to move an engine's
-        # input (see AGENTS.md), and this is the same zone, only spelled differently.
-        emit("POLARS_LANDING_CONTAINER", WS)
-        emit("POLARS_LANDING_ITEM", landing_id)
 
     elif engine == "ducklake":
         # The catalog metadata lives in a Fabric SQL DB. Created through the REST API, not

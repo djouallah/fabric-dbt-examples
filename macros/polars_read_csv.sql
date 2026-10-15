@@ -1,26 +1,28 @@
 {#-- The polars engine's counterpart of duckdb_read_csv.sql: how its fact models read the
      landed AEMO CSVs. Same spec (aemo_columns.sql), same record rule, same file choice --
-     only the mechanics differ, because dbt-polars has neither a read_csv() with options nor
-     SQL hooks:
+     only the mechanics differ:
 
-       * THE READ is a dbt source per landing folder (models/aemo/polars/_sources.yml) whose
-         read_options pad every row to 131 String columns named column_1..column_131 -- the
-         widest AEMO record (DREGION) plus one. A headerless Polars read otherwise takes its
-         width from the FIRST line and truncate_ragged_lines cuts every wider record down to
-         it: a DUNIT row came back 25 fields wide instead of 53 (polars_smoke run 38121051083).
-         The padded `schema` needs dtype NAMES resolved by the adapter -- the fork's
-         fix/read-options-dtype-names; see requirements/polars.txt.
+       * THE READ is Polars SQL read_csv(), ONE PER PICKED FILE, joined by UNION ALL, with no
+         header and `infer_schema_length => NULL` (pola-rs/polars#29917): the width is the
+         WIDEST row's. Not `infer_schema => false`, which reads only the first line's width --
+         a DUNIT row came back 25 fields wide instead of 53 (pipeline run 38650577769) -- and
+         not over the folder's glob, where the whole-file inference ran past 20 minutes before
+         the filename filter applied (polars_smoke run 38653690208). Types are inferred, so
+         every spec column is cast back to the String the DuckDB legs read (all_varchar).
+         Columns are numbered from column_0. The credential is AZURE_STORAGE_TOKEN, which
+         run_dbt.py sets: read_csv() takes none.
        * THE FILE CHOICE happens at parse time with run_query, where the DuckDB legs use a
          `SET VARIABLE` pre_hook: dbt-polars refuses SQL hooks ("there is no database to run
-         them on"). The query is the same one, newest first, and the list is rendered into the
-         model as a `filename IN (...)` on the folder's glob source. --#}
+         them on"). The query is the same one, newest first, and each file it lists becomes
+         one read_csv() in the model. --#}
 
 
-{#-- column_<i> AS <spec name>, in file order: the spec binds BY POSITION, as on every
-     engine (aemo_columns.sql: "Column ORDER is load-bearing"). --#}
+{#-- column_<i> AS <spec name>, in file order from column_0: the spec binds BY POSITION, as on
+     every engine (aemo_columns.sql: "Column ORDER is load-bearing"). Cast to VARCHAR because
+     read_csv() infers types; the models cast from String, as on the DuckDB legs. --#}
 {% macro polars_csv_columns(record) %}
   {%- for name in aemo_columns(record) %}
-    column_{{ loop.index }} AS {{ name }}{{ "," if not loop.last }}
+    CAST(column_{{ loop.index0 }} AS VARCHAR) AS {{ name }}{{ "," if not loop.last }}
   {%- endfor %}
 {% endmacro %}
 
@@ -59,17 +61,24 @@
 {% endmacro %}
 
 
-{#-- The staging read for one record: the padded glob source, narrowed to `files`, columns
-     named from the spec, filtered to the record. --#}
-{% macro polars_staging(record, source_name, files) %}
+{#-- The staging read for one record: one read_csv() per file in `files`, columns named from
+     the spec, filtered to the record. `files` is none outside run/build/retry, where nothing
+     executes: the folder's glob then stands in, so the model still compiles. --#}
+{% macro polars_staging(record, folder, files) %}
+  {%- set base = get_csv_archive_path() ~ '/' ~ folder ~ '/' -%}
+  {%- set paths = [base ~ '*.CSV'] if files is none else (files | map('string') | list) -%}
   SELECT * FROM (
+    {%- for f in paths %}
     SELECT
       {{- polars_csv_columns(record) }},
       filename
-    FROM {{ source(source_name, 'csv') }}
-    {%- if files is not none %}
-    WHERE split_part(filename, '/', -1) IN ('{{ files | join("', '") }}')
+    FROM read_csv('{{ f if files is none else base ~ f }}',
+      has_header => false, skip_rows => 1, infer_schema_length => NULL,
+      try_parse_dates => false, include_file_paths => 'filename')
+    {%- if not loop.last %}
+    UNION ALL
     {%- endif %}
+    {%- endfor %}
   ) AS r
   WHERE {{ polars_record_filter(record) }}
 {% endmacro %}

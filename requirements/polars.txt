@@ -1,28 +1,12 @@
-# The polars engine: dbt-polars, from the FORK, until its fixes are released upstream.
+# The polars engine: dbt-polars from PyPI, and Polars MAIN.
 #
-# djouallah/incubator-dbt-polars, branch `aemo` -- an integration branch: every fix this
-# project needs, each also on a branch of its own for its upstream PR:
-#   fix/source-file-extension    a source can name a `.CSV` file (dbt-polars#29, PR #30)
-#   fix/read-options-dtype-names  read_options can name dtypes (`schema: {a: String}`), which
-#                                 the padded read in macros/polars_read_csv.sql needs
-#   fix/run-operation-ref         run-operation can read a ref(), which the parity
-#                                 fingerprint needs (it never populates the adapter cache)
-# Pinned by COMMIT, so a push to the branch cannot change what a run installs. Re-pin after
-# merging a fix into `aemo`; return to the PyPI line (`dbt-polars[iceberg,azure]`) once a
-# release carries them all.
-#
-# ARCHIVE URLs, not git+https: the Fabric notebook installs this same file
-# (remote_dbt.pip_args) and need not have git. Core and both catalogs come from the SAME
-# commit: they are separate packages in one repo, and the catalogs pin dbt-polars==<core
-# version>, which the fork keeps at upstream's.
-#
-# No duckrun: the polars leg builds on the GitHub runner, not in Fabric (see pipeline.yml's
-# REMOTE and djouallah/duckrun#83 -- the two cannot share an environment today).
-dbt-polars[iceberg] @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip
-dbt-polars-catalog-local @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-local
-dbt-polars-catalog-azure @ https://github.com/djouallah/incubator-dbt-polars/archive/6181d736280926377c123d48a263c83eaffa1e4d.zip#subdirectory=catalogs/dbt-polars-catalog-azure
+# dbt-polars as released, no fork: the models read every landed file with Polars SQL table
+# functions (read_csv / read_parquet), so no source needs an adapter patch, and run_dbt.py takes
+# the parity fingerprint with `dbt show`, which resolves a ref() where run-operation cannot.
+dbt-polars[iceberg]==0.3.1
 # POLARS MAIN, pola-rs/polars@769413ba3f (lakehouse_benchmark's tmp_polars_main.yml build), until
-# a release has the SQL fixes the models need: #29876, #29877, #29878, #29879 and read_csv()
-# options (#29917). The fork asks only polars>=1.44.1, which this satisfies.
+# a release has what the models use: read_csv() options (#29917), TIMESTAMPTZ (#29878),
+# generate_series (#29879), and the IN-subquery and nested-WITH scoping fixes (#29876, #29877).
+# dbt-polars asks only polars>=1.44.1, which this satisfies.
 polars @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-769413ba3f/polars-2.0.0-py3-none-any.whl
 polars-runtime-32 @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-769413ba3f/polars_runtime_32-2.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl

@@ -20,9 +20,10 @@
         money columns get a relative tolerance, not equality.
 --#}
 
-{% macro parity_fingerprint(model='fct_summary') %}
-  {%- if not execute -%}{{ return('') }}{%- endif -%}
-
+{#-- The fingerprint's SELECT on its own. run_dbt.py runs it through `dbt show` on polars:
+     dbt-polars resolves a ref() only in a graph task, which fills its relation cache, and
+     run-operation is not one ("Could not find config for relation"). --#}
+{% macro parity_fingerprint_sql(model='fct_summary') %}
   {%- set rel = ref(model) -%}
   {#-- `dbl` is per-dialect for the same reason the date casts are: Spark SQL has no
        DOUBLE PRECISION and rejects it outright ("extra input 'PRECISION'"), which failed
@@ -51,6 +52,13 @@
       SUM(CAST({{ price }} AS {{ dbl }})) AS price_sum
     FROM {{ rel }}
   {%- endset -%}
+  {{ return(q) }}
+{% endmacro %}
+
+
+{% macro parity_fingerprint(model='fct_summary') %}
+  {%- if not execute -%}{{ return('') }}{%- endif -%}
+  {%- set q = parity_fingerprint_sql(model) -%}
 
   {#-- `dbt run-operation` DOES NOT FIRE on-run-start HOOKS. The DuckDB-family targets get
        their OneLake transport from one of those hooks, so this session would otherwise open

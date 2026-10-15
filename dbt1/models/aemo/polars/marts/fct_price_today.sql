@@ -19,7 +19,7 @@
 
 {% if files is none or files | length > 0 %}
 WITH staging AS (
-  {{ polars_staging('price_today', 'polars_price_today', files) }}
+  {{ polars_staging('price_today', 'price_today', files) }}
 )
 
 SELECT

@@ -146,14 +146,6 @@ models:
         dimensions: {+schema: mart}
         marts:      {+schema: landing}
 
-# The polars tree is the only one that declares sources (dbt-polars reads files no other way),
-# and they are gated like its models: on another target they would be dangling definitions.
-sources:
-  aemo_electricity:
-    aemo:
-      polars:
-        +enabled: "{{ target.name == 'polars' }}"
-
 data_tests:
   aemo_electricity:
     aemo:

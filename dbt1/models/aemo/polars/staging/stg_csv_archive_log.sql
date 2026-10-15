@@ -20,5 +20,5 @@ SELECT
   source_url,
   etag,
   csv_filename
-FROM {{ source('polars_landing', 'archive_log') }}
+FROM read_parquet('{{ get_archive_log_path() }}')
 WHERE csv_filename IS NOT NULL

@@ -5,10 +5,7 @@
 
      No parse-time "any new DUIDs?" probe, which the DuckDB legs use to skip the scan: it is
      an optimisation, the anti-join keeps the result identical without it, and a run_query on
-     a SOURCE before any model has materialised is not something dbt-polars resolves.
-
-     The reference CSVs are sources (models/aemo/polars/_sources.yml): dbt-polars reads files
-     no other way. --#}
+     a SOURCE before any model has materialised is not something dbt-polars resolves. --#}
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -34,7 +31,7 @@ WITH
       first(Region) AS Region,
       first("Fuel Source - Descriptor") AS FuelSourceDescriptor,
       first(Participant) AS Participant
-    FROM {{ source('polars_duid', 'duid_data') }}
+    FROM read_csv('{{ get_csv_archive_path() }}/duid/duid_data.csv')
     WHERE length(DUID) > 2
     GROUP BY DUID
   ),
@@ -44,11 +41,11 @@ WITH
       'WA1' AS Region,
       "Facility Code" AS DUID,
       "Participant Name" AS Participant
-    FROM {{ source('polars_duid', 'facilities') }}
+    FROM read_csv('{{ get_csv_archive_path() }}/duid/facilities.csv')
   ),
 
   wa_energy AS (
-    SELECT * FROM {{ source('polars_duid', 'wa_energy') }}
+    SELECT * FROM read_csv('{{ get_csv_archive_path() }}/duid/WA_ENERGY.csv')
   ),
 
   duid_wa AS (
@@ -74,7 +71,7 @@ WITH
       DUID AS duid,
       max(latitude) AS latitude,
       max(longitude) AS longitude
-    FROM {{ source('polars_duid', 'geo_data') }}
+    FROM read_csv('{{ get_csv_archive_path() }}/duid/geo_data.csv')
     WHERE latitude IS NOT NULL
     GROUP BY DUID
   ),

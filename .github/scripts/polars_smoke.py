@@ -84,70 +84,19 @@ ICEBERG_PROPS = {
 
 
 def profile_yml():
-    """Two catalogs: `onelake` (the Iceberg REST catalog, where models are written) and
-    `landing` (the dbt_landing lakehouse's Files, where sources are read)."""
+    """One catalog, `onelake` (the Iceberg REST catalog, where models are written). Landed files
+    are read with Polars SQL table functions, as the engine's models do: no source, so no
+    `azure` catalog and no dbt-polars-catalog-azure."""
     secret = "{{ env_var('DBT_ENV_SECRET_ONELAKE_TOKEN') }}"
     onelake = {"name": "onelake", "type": "iceberg", "schema": SCHEMA,
                "pyiceberg_type": "rest", **ICEBERG_PROPS,
                "token": secret, "adls.token": secret}
-    catalogs = [onelake]
-    if LANDING_ITEM:
-        # The azure catalog builds az://<container>/<prefix>/<schema>/<identifier>.<format>.
-        # OneLake: account `onelake`, container = the workspace, and use_fabric_endpoint so
-        # object_store goes to *.fabric.microsoft.com instead of *.core.windows.net.
-        catalogs.append({
-            "name": "landing", "type": "azure", "schema": "Files",
-            "account_name": "onelake", "container": WORKSPACE, "prefix": LANDING_ITEM,
-            "credentials": {"storage_options": {
-                "account_name": "onelake", "bearer_token": secret,
-                "use_fabric_endpoint": "true"}},
-        })
     return {"polars_smoke": {"target": "smoke", "outputs": {"smoke": {
-        "type": "polars", "threads": 1, "database": "onelake", "catalogs": catalogs}}}}
+        "type": "polars", "threads": 1, "database": "onelake", "catalogs": [onelake]}}}}
 
 
 PROJECT_YML = {"name": "polars_smoke", "version": "1.0.0", "profile": "polars_smoke",
                "model-paths": ["models"], "config-version": 2}
-
-# AEMO's DUNIT record is 53 columns and a PUBLIC_DAILY file also holds wider records (DREGION
-# is 130). The source reads with no header; `infer_schema: false` reads every column as String,
-# which is what all_varchar does on the DuckDB legs.
-CSV_READ_OPTIONS = {
-    "has_header": False,
-    "skip_rows": 1,
-    "infer_schema": False,
-    "truncate_ragged_lines": True,
-    "include_file_paths": "filename",
-    "ignore_errors": True,
-}
-
-
-# NO PADDED VARIANT. A source cannot be told the width of the widest AEMO record: scan_csv's
-# `schema` wants Polars dtypes, YAML can only carry the name ("String"), and dbt-polars passes
-# read_options through unconverted -- "'str' is not a Polars data type" (run 38120335217).
-# Worse, it failed EVERY source probe in that run, not just its own: one bad source in the
-# project breaks the compile of any model that reads a source.
-
-
-def sources_yml(daily_name):
-    """`daily_name` is the file name WITH its `.CSV`: dbt-polars#30 uses an identifier that
-    already ends in the format's extension as written."""
-    if not LANDING_ITEM:
-        return None
-    tables_files = [{"name": "archive_log", "identifier": "csv_raw_archive_log",
-                     "config": {"file_format": "parquet"}}]
-    tables_daily = [{"name": "daily_glob", "identifier": "*.CSV",
-                     "config": {"file_format": "csv", "read_options": CSV_READ_OPTIONS}}]
-    if daily_name:
-        tables_daily.append({"name": "daily_one", "identifier": daily_name,
-                             "config": {"file_format": "csv",
-                                        "read_options": CSV_READ_OPTIONS}})
-    return {"version": 2, "sources": [
-        {"name": "landing_files", "database": "landing", "schema": "Files",
-         "tables": tables_files},
-        {"name": "landing_daily", "database": "landing", "schema": CSV_DIR,
-         "tables": tables_daily},
-    ]}
 
 
 # ---- the probes ------------------------------------------------------------------------------
@@ -321,10 +270,12 @@ def probes(ctx):
          "the fact models ask the archive log which files are pending with run_query",
          {"m_run_query": "{{ config(materialized='table') }}\n" + RUN_QUERY_SQL},
          [None], lambda c: expect_rows(c, "m_run_query", {(1, 42)})),
-        (8, "archive log parquet from Files, as a source",
+        (8, "archive log parquet from Files, Polars SQL read_parquet()",
          "stg_csv_archive_log reads csv_raw_archive_log.parquet",
          {"f_archive_log": "{{ config(materialized='table') }}\nselect source_type, count(*) as n "
-                           "from {{ source('landing_files', 'archive_log') }} group by source_type"}
+                           "from read_parquet('abfss://" + WORKSPACE + "@" + ONELAKE_DFS + "/"
+                           + LANDING_ITEM + "/Files/csv_raw_archive_log.parquet') "
+                           "group by source_type"}
          if files and HAS_ARCHIVE_LOG else None,
          [None], lambda c: expect_nonempty(c, "f_archive_log")),
         (9, "landed AEMO CSV, Polars SQL read_csv()",
@@ -333,51 +284,37 @@ def probes(ctx):
                         + (one or {}).get("abfss", "") + "')"}
          if one else None,
          [None], lambda c: expect_nonempty(c, "f_read_csv")),
-        (10, "landed AEMO CSV, source by exact file name",
-         "one landed PUBLIC_DAILY file, DUNIT record, with the file name column",
-         {"f_daily_one": "{{ config(materialized='table') }}\n"
-                         "select * from {{ source('landing_daily', 'daily_one') }}"}
-         if one else None,
-         [None], lambda c: expect_dunit_by_position(c, "f_daily_one")),
-        (11, "landed AEMO CSV, source over the folder (identifier '*.CSV')",
-         "every file in the folder at once",
-         # LIMIT, not a count: the folder can hold tens of GB (lakehouse_benchmark's Files/csv),
-         # and the question is whether the glob resolves to the landed files at all.
-         {"f_daily_glob": "{{ config(materialized='table') }}\nselect filename, column_2 "
-                          "from {{ source('landing_daily', 'daily_glob') }} limit 5"}
-         if files else None,
-         [None], lambda c: expect_nonempty(c, "f_daily_glob")),
-        (12, "landed AEMO CSV, Polars SQL read_csv() with options",
+        (10, "landed AEMO CSV, Polars SQL read_csv() with options",
          "the ragged read duckdb_read_csv() does: no header, all String, ragged rows, filename",
          {"f_read_csv_opts": "{{ config(materialized='table') }}\nselect filename, count(*) as n "
                              "from read_csv('" + (one or {}).get("abfss", "") + "', "
                              + READ_CSV_OPTIONS_SQL + ") where " + DUNIT0 + " group by filename"}
          if one else None,
          [None], lambda c: expect_dunit(c, "f_read_csv_opts")),
-        (13, "landed AEMO CSV, Polars SQL read_csv() defaults",
+        (11, "landed AEMO CSV, Polars SQL read_csv() defaults",
          "which columns a bare read_csv() gives a ragged file: is the DUNIT record addressable",
          {"f_read_csv_shape": "{{ config(materialized='table') }}\nselect * from read_csv('"
                               + (one or {}).get("abfss", "") + "') limit 20"}
          if one else None,
          [None], lambda c: expect_shape(c, "f_read_csv_shape")),
-        (14, "landed AEMO CSV, Polars SQL read_csv() over a glob",
+        (12, "landed AEMO CSV, Polars SQL read_csv() over a glob",
          "the folder at once, bypassing the source's lower-case .csv (dbt-polars#29)",
          {"f_read_csv_glob": "{{ config(materialized='table') }}\nselect * from read_csv('"
                              + glob_abfss() + "') limit 5"}
          if files else None,
          [None], lambda c: expect_nonempty(c, "f_read_csv_glob")),
-        (15, "landed AEMO CSV, a file list as UNION ALL",
+        (13, "landed AEMO CSV, a file list as UNION ALL",
          "how a list rendered at parse time would be read: one read_csv() per file",
          {"f_read_csv_list": "{{ config(materialized='table') }}\nselect count(*) as n from ("
                              + " union all ".join(f"select 1 as x from read_csv('{f['abfss']}')"
                                                   for f in two) + ") as t"}
          if len(two) >= 2 else None,
          [None], lambda c: expect_total_rows(c, "f_read_csv_list", two)),
-        (16, "file picker at parse time, against {{ this }}",
+        (14, "file picker at parse time, against {{ this }}",
          "the pre_hook replaced: run_query lists the keys present, the model excludes them",
          {"m_picker": PICKER_SQL}, [{"batch": 1}, {"batch": 2}],
          lambda c: expect_rows(c, "m_picker", INSERT_ONLY_EXPECTED)),
-        (17, "run_query over a landed file at parse time",
+        (15, "run_query over a landed file at parse time",
          "the fact models count pending files before they read; does that context reach OneLake",
          {"f_run_query_file": "{{ config(materialized='table') }}\n"
                               + run_query_file_sql((one or {}).get("abfss", ""))}
@@ -404,18 +341,6 @@ def probes(ctx):
         out.append((len(out) + 1, f"SQL shape: {name[2:]}", "Polars SQL dialect, as the models write it",
                     {name: "{{ config(materialized='table') }}\n" + sql}, [None],
                     (lambda n: lambda c: expect_nonempty(c, n))(name)))
-    # LAST ON PURPOSE: if Polars cannot prune files on the `filename` predicate it scans the
-    # whole folder (tens of GB in Files/csv), and a step timeout then costs only this probe.
-    out.append((len(out) + 1, "landed AEMO CSV, glob source filtered to a file list",
-                "how a leg would read: one source over the folder, narrowed to the files the "
-                "parse-time picker chose",
-                {"f_daily_list": "{{ config(materialized='table') }}\nselect * from "
-                                 "{{ source('landing_daily', 'daily_glob') }} where "
-                                 "split_part(filename, '/', -1) in ("
-                                 + ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in two)
-                                 + ")"}
-                if len(two) >= 2 else None,
-                [None], lambda c: expect_dunit_by_position(c, "f_daily_list", two)))
     # How the fact models would read with read_csv() options instead of the padded source: the
     # folder glob, narrowed to the files the picker chose, DUNIT rows counted per file.
     out.append((len(out) + 1, "landed AEMO CSV, read_csv() with options over the folder, "
@@ -594,14 +519,12 @@ def expect_positive(ctx, name):
     return ("PASS" if isinstance(n, int) and n > 0 else "FAIL"), f"run_query returned n={n}"
 
 
-def write_project(root, models, sources):
+def write_project(root, models):
     (root / "dbt_project.yml").write_text(json.dumps(PROJECT_YML), encoding="utf-8")
     (root / "profiles.yml").write_text(json.dumps(profile_yml()), encoding="utf-8")
     mdir = root / "models"
     shutil.rmtree(mdir, ignore_errors=True)
     mdir.mkdir()
-    if sources:
-        (mdir / "_sources.yml").write_text(json.dumps(sources), encoding="utf-8")
     for name, sql in (models or {}).items():
         (mdir / f"{name}.sql").write_text(sql, encoding="utf-8")
 
@@ -693,7 +616,6 @@ def main():
     drop_probe_tables(ctx["catalog"])
     daily = ctx["daily_file"]
     say(f"{'daily file':26} {daily['path'] if daily else '(none)'}")
-    sources = sources_yml(daily["path"].rsplit("/", 1)[1] if daily else None)
 
     results = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -704,7 +626,7 @@ def main():
                 results.append((number, name, "SKIP", "not in this landing zone"))
                 say("     SKIP")
                 continue
-            write_project(root, models or {}, sources)
+            write_project(root, models or {})
             status, detail = "PASS", ""
             for i, vars_ in enumerate(runs):
                 command = "debug" if vars_ == "debug" else "run"

@@ -88,14 +88,3 @@ aemo_electricity:
           adls.account-host: onelake.blob.fabric.microsoft.com
           token: "{{ env_var('ONELAKE_TOKEN') }}"
           adls.token: "{{ env_var('ONELAKE_TOKEN') }}"
-        - name: landing
-          type: azure
-          schema: Files
-          account_name: onelake
-          container: "{{ env_var('POLARS_LANDING_CONTAINER') }}"
-          prefix: "{{ env_var('POLARS_LANDING_ITEM') }}"
-          credentials:
-            storage_options:
-              account_name: onelake
-              bearer_token: "{{ env_var('ONELAKE_TOKEN') }}"
-              use_fabric_endpoint: "true"
