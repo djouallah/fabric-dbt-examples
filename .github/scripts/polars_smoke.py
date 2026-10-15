@@ -41,6 +41,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -209,6 +210,31 @@ READ_CSV_OPTIONS_SQL = ("has_header => false, skip_rows => 1, infer_schema => fa
 READ_CSV_WIDE_SQL = ("has_header => false, skip_rows => 1, infer_schema_length => NULL, "
                      "try_parse_dates => false, include_file_paths => 'filename'")
 
+# READ SPEED. The polars leg's fact models read with READ_CSV_WIDE_SQL, one read_csv() per file,
+# and pipeline run 38658194368's fct_price ran 16.5 minutes on 50 files before the runner died.
+# lakehouse_benchmark's polars engine is fast on the same files with scan_csv(list, schema=String,
+# missing_columns="insert"): no inference, one pass. Polars SQL read_csv() takes `schema` but
+# REFUSES `missing_columns` (READ_CSV_EXCLUDED_OPTIONS, pola-rs/polars@769413ba3f). Each variant
+# below reads the same SPEED_FILES newest files, one read_csv() per file, UNION ALL, and is graded
+# on time and on width (the DUNIT rows' 53rd field).
+SPEED_FILES = 10
+_HEAD = "has_header => false, skip_rows => 1, include_file_paths => 'filename'"
+_SCHEMA = "schema => {" + ", ".join(f"'column_{i}': 'VARCHAR'" for i in range(131)) + "}"
+READ_CSV_SPEED = {
+    "f_speed_infer_null": READ_CSV_WIDE_SQL,
+    "f_speed_infer_false": _HEAD + ", infer_schema => false",
+    "f_speed_schema": _HEAD + ", " + _SCHEMA,
+    "f_speed_schema_ragged": _HEAD + ", " + _SCHEMA + ", truncate_ragged_lines => true",
+    "f_speed_missing_columns": _HEAD + ", " + _SCHEMA + ", missing_columns => 'insert'",
+}
+SPEED_WHY = {
+    "f_speed_infer_null": "the leg's read today: widest-row inference, every file read twice",
+    "f_speed_infer_false": "no inference: fast, but is the width the first line's?",
+    "f_speed_schema": "131 VARCHAR, no missing_columns: does a short first row error or pad?",
+    "f_speed_schema_ragged": "the same, plus truncate_ragged_lines",
+    "f_speed_missing_columns": "the benchmark's missing_columns => 'insert': refused in SQL?",
+}
+
 RUN_QUERY_SQL = """
 {%- if execute -%}
 {%- set r = run_query("select 42 as n") -%}
@@ -375,6 +401,15 @@ def probes(ctx):
                     if (len(files) >= (2 if key.endswith("list") else 1)) else None,
                     [None], (lambda k, f: lambda c: expect_dunit_wide(c, k, f))(
                         key, files if key.endswith("list") else None)))
+    speed = ctx.get("speed_files") or []
+    for key, opts in READ_CSV_SPEED.items():
+        reads = " union all ".join(
+            "select filename, column_52 as c52 from read_csv('" + f["abfss"] + "', " + opts
+            + ") where " + DUNIT0_CAST for f in speed)
+        out.append((len(out) + 1, f"read speed, {len(speed)} files: {key[8:]}", SPEED_WHY[key],
+                    {key: "{{ config(materialized='table') }}\nselect * from (" + reads + ") as t"}
+                    if len(speed) >= 2 else None,
+                    [None], (lambda k: lambda c: expect_dunit_wide(c, k, c["speed_files"]))(key)))
     return out
 
 
@@ -477,15 +512,22 @@ def expect_dunit_by_position(ctx, name, files=None):
     return ("PASS" if got == truth and len(cols) >= 53 else "FAIL"), detail
 
 
+def dunit_truth(ctx, f):
+    """DUNIT rows in one file by the padded read, cached: the speed probes grade one set 5 times."""
+    import polars as pl
+    cache = ctx.setdefault("truth", {})
+    if f["abfss"] not in cache:
+        cache[f["abfss"]] = (padded_scan(f["abfss"])
+                             .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
+                                     & (pl.col("column_4") == "3"))
+                             .select(pl.len()).collect().item())
+    return cache[f["abfss"]]
+
+
 def expect_dunit_wide(ctx, name, files=None):
     """DUNIT rows counted against the padded read, and their 53rd field filled."""
-    import polars as pl
     rows, _ = table_rows(ctx, name)
-    truth = sum(padded_scan(f["abfss"])
-                .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
-                        & (pl.col("column_4") == "3"))
-                .select(pl.len()).collect().item()
-                for f in (files or [ctx["daily_file"]]))
+    truth = sum(dunit_truth(ctx, f) for f in (files or [ctx["daily_file"]]))
     filled = sum(1 for r in rows if r["c52"] is not None)
     detail = (f"DUNIT rows {len(rows)}, a padded read gives {truth}; 53rd field filled on "
               f"{filled}")
@@ -606,9 +648,23 @@ def banner():
 
 def main():
     banner()
-    daily_files = newest_daily_files()
-    ctx = {"catalog": iceberg_catalog(), "daily_files": daily_files,
+    speed_files = newest_daily_files(SPEED_FILES)
+    daily_files = speed_files[:2]
+    ctx = {"catalog": iceberg_catalog(), "daily_files": daily_files, "speed_files": speed_files,
            "daily_file": daily_files[0] if daily_files else None}
+    if len(speed_files) >= 2:
+        # THE REFERENCE: the benchmark's read in Python (scan_csv over the list, String schema,
+        # missing_columns="insert"), timed on the speed probes' files. Not a probe: no model.
+        import polars as pl
+        t0 = time.perf_counter()
+        n = (padded_scan([f["abfss"] for f in speed_files])
+             .filter((pl.col("column_1") == "D") & (pl.col("column_2") == "DUNIT")
+                     & (pl.col("column_4") == "3"))
+             .select(pl.len()).collect().item())
+        ctx["reference"] = (f"python scan_csv(list of {len(speed_files)}, String schema, "
+                            f"missing_columns='insert'): {n} DUNIT rows in "
+                            f"{time.perf_counter() - t0:.1f}s")
+        say(f"{'reference':26} {ctx['reference']}")
     try:
         ctx["catalog"].create_namespace_if_not_exists((SCHEMA,))
     except Exception as e:  # noqa: BLE001 - dbt-polars creates it too; its own error is the finding
@@ -628,19 +684,21 @@ def main():
                 continue
             write_project(root, models or {})
             status, detail = "PASS", ""
+            t0 = time.perf_counter()
             for i, vars_ in enumerate(runs):
                 command = "debug" if vars_ == "debug" else "run"
                 ok, msg = dbt(root, command, None if command == "debug" else vars_)
                 if not ok:
                     status, detail = "FAIL", f"dbt {command} #{i + 1}: {msg}"
                     break
+            secs = time.perf_counter() - t0
             if status == "PASS" and check:
                 try:
                     status, detail = check(ctx)
                 except Exception as e:  # noqa: BLE001 - a failed read-back is a result
                     status, detail = "FAIL", f"read-back: {oneline(e)}"
-            results.append((number, name, status, detail))
-            say(f"     {status} {detail}")
+            results.append((number, name, status, f"[{secs:.0f}s dbt] {detail}"))
+            say(f"     {status} [{secs:.0f}s dbt] {detail}")
 
     if not KEEP:
         drop_probe_tables(ctx["catalog"])

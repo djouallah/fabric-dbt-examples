@@ -40,7 +40,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     # The whole job is best-effort. A failure here is a finding about dbt-polars, not a broken repo.
     continue-on-error: true
     env:
@@ -108,7 +108,7 @@ jobs:
           fi
 
       - name: Probe dbt-polars
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: python .github/scripts/polars_smoke.py 2>&1 | tee polars_smoke.log
 
       - uses: actions/upload-artifact@v6
