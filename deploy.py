@@ -138,10 +138,13 @@ def copy_repo(provision) -> None:
 
 
 def publish(stage: Path, item_types: list[str]) -> None:
+    from azure.identity import AzureCliCredential
     from fabric_cicd import FabricWorkspace, publish_all_items
 
+    # fabric-cicd 1.4.0 requires the credential: its DefaultAzureCredential fallback is gone
+    # (microsoft/fabric-cicd#909). The CLI login is the one azure/login made.
     ws = FabricWorkspace(workspace_id=WS, environment="ci", repository_directory=str(stage),
-                         item_type_in_scope=item_types)
+                         item_type_in_scope=item_types, token_credential=AzureCliCredential())
     publish_all_items(ws)
 
 
