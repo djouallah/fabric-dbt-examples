@@ -84,16 +84,27 @@ ICEBERG_PROPS = {
 }
 
 
-def profile_yml():
-    """One catalog, `onelake` (the Iceberg REST catalog, where models are written). Landed files
-    are read with Polars SQL table functions, as the engine's models do: no source, so no
-    `azure` catalog and no dbt-polars-catalog-azure."""
+def profile_yml(landing=False):
+    """`onelake`, the Iceberg REST catalog where models are written, and -- only for the probe
+    that reads a dbt SOURCE -- `landing`, a dbt-polars-catalog-azure storage catalog rooted at the
+    landing lakehouse. A source with `external.location` is read from a path under its catalog's
+    root (dbt-polars 0.4.0, #29), by a plain `pl.scan_csv(path, **read_options)`. Every other
+    probe runs without it, so a broken azure catalog cannot take the rest down with it."""
     secret = "{{ env_var('DBT_ENV_SECRET_ONELAKE_TOKEN') }}"
     onelake = {"name": "onelake", "type": "iceberg", "schema": SCHEMA,
                "pyiceberg_type": "rest", **ICEBERG_PROPS,
                "token": secret, "adls.token": secret}
+    catalogs = [onelake]
+    if landing:
+        # az://<workspace>/<landing item>/<location>. OneLake is ADLS behind the Fabric endpoint:
+        # account `onelake` plus object_store's use_fabric_endpoint. The storage_options override
+        # replaces the catalog's DefaultAzureCredential chain with the job's token.
+        catalogs.append({"name": "landing", "type": "azure", "schema": "files",
+                         "account_name": "onelake", "container": WORKSPACE, "prefix": LANDING_ITEM,
+                         "credentials": {"storage_options": {"bearer_token": secret,
+                                                             "use_fabric_endpoint": "true"}}})
     return {"polars_smoke": {"target": "smoke", "outputs": {"smoke": {
-        "type": "polars", "threads": 1, "database": "onelake", "catalogs": [onelake]}}}}
+        "type": "polars", "threads": 1, "database": "onelake", "catalogs": catalogs}}}}
 
 
 PROJECT_YML = {"name": "polars_smoke", "version": "1.0.0", "profile": "polars_smoke",
@@ -234,6 +245,19 @@ SPEED_WHY = {
     "f_speed_schema_ragged": "the same, plus truncate_ragged_lines",
     "f_speed_missing_columns": "the benchmark's missing_columns => 'insert': refused in SQL?",
 }
+
+# The landed folder as ONE dbt source in the `landing` catalog (profile_yml(landing=True)).
+# read_options are pl.scan_csv's own parameters -- dbt-polars 0.4.0 rejects any other key (#34)
+# and resolves the dtype names in `schema` (#33). Columns named from column_1, as padded_scan()
+# names them, so DUNIT and the 53rd field (column_53) read as they do there.
+SOURCES_YML = {"version": 2, "sources": [{
+    "name": "landed", "database": "landing", "schema": "files",
+    "tables": [{"name": "daily", "external": {"location": f"{CSV_DIR}/*.CSV"},
+                "config": {"file_format": "csv", "read_options": {
+                    "has_header": False, "skip_rows": 1,
+                    "schema": {f"column_{i}": "String" for i in range(1, 132)},
+                    "missing_columns": "insert", "truncate_ragged_lines": True,
+                    "include_file_paths": "filename"}}}]}]}
 
 RUN_QUERY_SQL = """
 {%- if execute -%}
@@ -402,6 +426,22 @@ def probes(ctx):
                     [None], (lambda k, f: lambda c: expect_dunit_wide(c, k, f))(
                         key, files if key.endswith("list") else None)))
     speed = ctx.get("speed_files") or []
+    # THE SOURCE ROUTE, which would replace the UNION ALL: one dbt source over the folder glob,
+    # read by dbt-polars as pl.scan_csv(glob, **read_options) -- the Python API, so the
+    # benchmark's schema + missing_columns read that Polars SQL refuses (pola-rs/polars#29970)
+    # -- and the model narrows it to this run's files by filename, which Polars pushes into the
+    # scan. Same SPEED_FILES as the speed probes, graded the same way: compare its time with
+    # the UNION ALL's (infer_null) and with the reference.
+    names = ", ".join(f"'{f['path'].rsplit('/', 1)[1]}'" for f in speed)
+    out.append((len(out) + 1, f"read speed, {len(speed)} files: dbt source over the folder glob",
+                "external.location glob + read_options (schema, missing_columns), filtered by "
+                "filename: no UNION ALL",
+                {"sources.yml": json.dumps(SOURCES_YML),
+                 "f_source_glob": "{{ config(materialized='table') }}\nselect filename, "
+                                  "column_53 as c52 from {{ source('landed', 'daily') }} where "
+                                  "split_part(filename, '/', -1) in (" + names + ") and " + DUNIT}
+                if files and len(speed) >= 2 else None,
+                [None], lambda c: expect_dunit_wide(c, "f_source_glob", c["speed_files"])))
     for key, opts in READ_CSV_SPEED.items():
         reads = " union all ".join(
             "select filename, column_52 as c52 from read_csv('" + f["abfss"] + "', " + opts
@@ -562,13 +602,16 @@ def expect_positive(ctx, name):
 
 
 def write_project(root, models):
+    """A name ending in .yml is written as is (a sources file); every other one is a model."""
+    models = models or {}
+    landing = any(name.endswith(".yml") for name in models)
     (root / "dbt_project.yml").write_text(json.dumps(PROJECT_YML), encoding="utf-8")
-    (root / "profiles.yml").write_text(json.dumps(profile_yml()), encoding="utf-8")
+    (root / "profiles.yml").write_text(json.dumps(profile_yml(landing)), encoding="utf-8")
     mdir = root / "models"
     shutil.rmtree(mdir, ignore_errors=True)
     mdir.mkdir()
-    for name, sql in (models or {}).items():
-        (mdir / f"{name}.sql").write_text(sql, encoding="utf-8")
+    for name, sql in models.items():
+        (mdir / (name if name.endswith(".yml") else f"{name}.sql")).write_text(sql, encoding="utf-8")
 
 
 def dbt(root, command, vars_):

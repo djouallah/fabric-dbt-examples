@@ -1,3 +1,6 @@
 # The dbt-polars SMOKE TEST, not the engine: it installs exactly what the engine does, so a
 # probe measures the adapter the polars leg runs on. The pin and its reasons are in polars.txt.
 -r polars.txt
+# The source probe's file catalog: a source with external.location must sit under a storage
+# catalog. Pinned to dbt-polars' own version (the package requires dbt-polars==<version>).
+dbt-polars-catalog-azure==0.4.0

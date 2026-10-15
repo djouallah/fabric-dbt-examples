@@ -44,7 +44,7 @@ def workflow():
 def _probes(smoke):
     files = [{"path": f"x/Files/csv_raw/daily/{s}.CSV", "stem": s,
               "abfss": f"abfss://ws@onelake.dfs.fabric.microsoft.com/x/{s}.CSV"} for s in "BA"]
-    return smoke.probes({"daily_file": files[0], "daily_files": files})
+    return smoke.probes({"daily_file": files[0], "daily_files": files, "speed_files": files})
 
 
 def _model(smoke, name):
@@ -131,12 +131,27 @@ def test_requirements_use_released_dbt_polars():
     assert any(l.startswith("dbt-polars[iceberg]==") for l in reqs)
 
 
-def test_no_probe_reads_a_source(smoke):
-    """A source needs a file catalog (dbt-polars-catalog-azure), which the engine no longer
-    installs: every landed file is read with a table function."""
-    assert not hasattr(smoke, "sources_yml")
-    catalogs = smoke.profile_yml()["polars_smoke"]["outputs"]["smoke"]["catalogs"]
-    assert [c["type"] for c in catalogs] == ["iceberg"]
+def test_only_the_source_probe_gets_the_file_catalog(smoke):
+    """The source probe needs a storage catalog (dbt-polars-catalog-azure) for its
+    external.location; every other probe runs on the Iceberg catalog alone, so a broken azure
+    catalog cannot fail the rest."""
+    def types(landing):
+        cats = smoke.profile_yml(landing)["polars_smoke"]["outputs"]["smoke"]["catalogs"]
+        return [c["type"] for c in cats]
+    assert types(False) == ["iceberg"]
+    assert types(True) == ["iceberg", "azure"]
+    with_yml = [p for p in _probes(smoke) if any(m.endswith(".yml") for m in (p[3] or {}))]
+    assert [m for p in with_yml for m in p[3]] == ["sources.yml", "f_source_glob"]
+
+
+def test_the_source_reads_with_scan_csv_options(smoke):
+    """read_options are pl.scan_csv's parameters, and missing_columns is the one Polars SQL
+    refuses (pola-rs/polars#29970): it is the reason for this route."""
+    table = smoke.SOURCES_YML["sources"][0]["tables"][0]
+    assert table["external"]["location"].endswith("/*.CSV")
+    opts = table["config"]["read_options"]
+    assert opts["missing_columns"] == "insert" and len(opts["schema"]) == 131
+    assert "source('landed', 'daily')" in _model(smoke, "f_source_glob")
 
 
 def test_the_smoke_installs_the_engine_pin():

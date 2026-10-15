@@ -17,7 +17,11 @@
         {"url": "https://github.com/pola-rs/polars/pull/29917", "id": "#29917", "status": "fixed on main", "kind": "gap",
          "text": "SQL read_csv() took no named options, so a ragged file could not be read with the right width."},
         {"url": "https://github.com/pola-rs/polars/issues/28798", "id": "#28798", "status": "open", "kind": "gap",
-         "text": "No current_date / current_timestamp / now() in SQL, by any spelling."}
+         "text": "No current_date / current_timestamp / now() in SQL, by any spelling."},
+        {"url": "https://github.com/pola-rs/polars/issues/29969", "id": "#29969", "status": "open", "kind": "gap",
+         "text": "SQL read_csv() takes no list of paths, unlike scan_csv: the polars leg reads one file per read_csv(), joined by UNION ALL."},
+        {"url": "https://github.com/pola-rs/polars/issues/29970", "id": "#29970", "status": "open", "kind": "gap",
+         "text": "SQL read_csv() rejects missing_columns, so a ragged CSV cannot be read with a fixed schema: widest-row inference instead, 37 s for 10 files where scan_csv takes 4.9 s."}
       ],
       "here": "The polars leg runs a pinned Polars main build until a release carries the fixes."
     },
