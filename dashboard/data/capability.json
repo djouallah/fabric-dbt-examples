@@ -1,0 +1,215 @@
+{
+  "engines": ["duckrun", "iceberg", "ducklake", "spark", "polars"],
+  "groups": ["Incremental", "Reading files", "dbt features", "Catalog & credentials", "Maintenance", "Dialect"],
+  "rows": [
+    {
+      "group": "Incremental",
+      "label": "Insert-only merge (do nothing on match)",
+      "cells": {
+        "duckrun": {"o": "native", "n": "merge_clauses do_nothing is a DuckDB anti-join plus a plain append: no delta-rs merge pool, no file rewritten.", "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql"},
+        "iceberg": {"o": "native", "n": "dbt-duckdb merge_clauses do_nothing.", "path": "dbt1/models/aemo/iceberg/marts/fct_scada.sql"},
+        "ducklake": {"o": "native", "n": "dbt-duckdb merge_clauses do_nothing.", "path": "dbt1/models/aemo/ducklake/marts/fct_scada.sql"},
+        "spark": {"o": "workaround", "n": "dbt-spark merges update + insert: a matched key updates. That only happens when two runs fold the same file.", "path": "dbt1/models/aemo/spark/marts/fct_scada.sql"},
+        "polars": {"o": "workaround", "silent": true, "n": "dbt-polars ignores merge_clauses, so a do-nothing merge UPDATES matched rows. Here: append, excluding files already folded.", "path": "dbt1/models/aemo/polars/marts/fct_scada.sql"}
+      }
+    },
+    {
+      "group": "Incremental",
+      "label": "Matched UPDATE in a merge",
+      "cells": {
+        "duckrun": {"o": "native", "n": "delta-rs merge. It scales with the target's partition span, not the batch, which is why the facts prefer the insert-only form."},
+        "iceberg": {"o": "no", "n": "The OneLake Iceberg catalog rejects data files + delete files in one commit: BadRequest 400, \"Only one instance of each update type is allowed per request\"."},
+        "ducklake": {"o": "native", "n": "DuckLake can. fct_summary gives it up so the three DuckDB trees run one config.", "path": "dbt1/models/aemo/ducklake/marts/fct_summary.sql"},
+        "spark": {"o": "native", "n": "Delta MERGE.", "path": "dbt1/models/aemo/spark/marts/fct_summary.sql"},
+        "polars": {"o": "native", "n": "Matched rows update whether asked or not: merge_clauses is ignored."}
+      }
+    },
+    {
+      "group": "Incremental",
+      "label": "Knows its tables exist on a fresh machine",
+      "cells": {
+        "duckrun": {"o": "native", "n": "The Delta tables in OneLake are the state."},
+        "iceberg": {"o": "native", "n": "The OneLake REST catalog is the state."},
+        "ducklake": {"o": "native", "n": "The catalog SQL DB is the state."},
+        "spark": {"o": "workaround", "silent": true, "n": "A fresh runner's metastore is empty: is_incremental() is false and every incremental model silently rebuilds. spark_session.py registers every Delta table before dbt starts.", "path": ".github/scripts/spark_session.py"},
+        "polars": {"o": "native", "n": "The OneLake REST catalog is the state."}
+      }
+    },
+    {
+      "group": "Reading files",
+      "label": "Ragged multi-record CSV",
+      "cells": {
+        "duckrun": {"o": "native", "n": "read_csv with all_varchar, null_padding, ignore_errors and auto_detect=false. With auto-detect on, DuckDB infers a narrower layout from the first record type it sees.", "path": "macros/duckdb_read_csv.sql"},
+        "iceberg": {"o": "native", "n": "Same read_csv as duckrun.", "path": "macros/duckdb_read_csv.sql"},
+        "ducklake": {"o": "native", "n": "Same read_csv as duckrun.", "path": "macros/duckdb_read_csv.sql"},
+        "spark": {"o": "native", "n": "Just reads it: USING csv with an explicit STRING schema and mode PERMISSIVE pads short rows and drops extra fields, no questions asked.", "path": "dbt1/macros/spark_read_csv.sql"},
+        "polars": {"o": "workaround", "n": "Polars SQL read_csv(), ONE FILE PER CALL, no header, infer_schema_length => NULL so the width is the widest row's. infer_schema => false reads only the first line's width (25 of 53 fields); a folder glob ran past 20 minutes.", "path": "macros/polars_read_csv.sql"}
+      }
+    },
+    {
+      "group": "Reading files",
+      "label": "Pick this run's files before the read",
+      "cells": {
+        "duckrun": {"o": "native", "n": "A pre_hook SET VARIABLE, read back with getvariable() in the model.", "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql"},
+        "iceberg": {"o": "native", "n": "A pre_hook SET VARIABLE, read back with getvariable().", "path": "dbt1/models/aemo/iceberg/marts/fct_scada.sql"},
+        "ducklake": {"o": "native", "n": "A pre_hook SET VARIABLE, read back with getvariable().", "path": "dbt1/models/aemo/ducklake/marts/fct_scada.sql"},
+        "spark": {"o": "native", "n": "run_query inside the pre_hook macro, turned into a Hadoop brace glob.", "path": "dbt1/macros/spark_new_files.sql"},
+        "polars": {"o": "workaround", "n": "No SQL hooks, so the list is a parse-time run_query and every file becomes its own read_csv().", "path": "macros/polars_read_csv.sql"}
+      }
+    },
+    {
+      "group": "dbt features",
+      "label": "SQL hooks (pre / post / on-run)",
+      "cells": {
+        "duckrun": {"o": "native", "n": "Used for the file list."},
+        "iceberg": {"o": "native", "n": "Used for the file list."},
+        "ducklake": {"o": "native", "n": "Used for the file list, compaction and delta_export().", "path": "dbt1/dbt_project.yml"},
+        "spark": {"o": "native", "n": "Used for the CSV stage table.", "path": "dbt1/macros/spark_read_csv.sql"},
+        "polars": {"o": "no", "silent": true, "n": "dbt-polars raises on a hook that renders SQL; on-run-end hooks report OK without running (dbt-polars#36)."}
+      }
+    },
+    {
+      "group": "dbt features",
+      "label": "A view in the target database",
+      "cells": {
+        "duckrun": {"o": "native", "n": "stg_csv_archive_log is a view.", "path": "dbt1/models/aemo/duckrun/staging/stg_csv_archive_log.sql"},
+        "iceberg": {"o": "workaround", "n": "The Iceberg catalog has no CREATE VIEW: the model declares database='memory', a view that dies with the process. So dbt retry cannot re-run a node that reads it, and --full-refresh fails (no rename): a reset is a DROP.", "path": "dbt1/models/aemo/iceberg/staging/stg_csv_archive_log.sql"},
+        "ducklake": {"o": "native", "n": "stg_csv_archive_log is a view.", "path": "dbt1/models/aemo/ducklake/staging/stg_csv_archive_log.sql"},
+        "spark": {"o": "native", "n": "stg_csv_archive_log is a view.", "path": "dbt1/models/aemo/spark/staging/stg_csv_archive_log.sql"},
+        "polars": {"o": "workaround", "n": "No shared session: every model is its own Polars SQLContext, so the archive log is a table rebuilt every run.", "path": "dbt1/models/aemo/polars/staging/stg_csv_archive_log.sql"}
+      }
+    },
+    {
+      "group": "dbt features",
+      "label": "Adapter macro overrides needed",
+      "cells": {
+        "duckrun": {"o": "native", "n": "None."},
+        "iceberg": {"o": "workaround", "n": "Two on dbt-duckdb 1.11.0: DESCRIBE must filter Iceberg's hidden __ column, DROP must omit CASCADE. Both branch on target.name, because ducklake is type duckdb too.", "path": "dbt1/macros/iceberg_adapter_overrides.sql"},
+        "ducklake": {"o": "native", "n": "None: upstream already omits CASCADE for DuckLake."},
+        "spark": {"o": "native", "n": "None."},
+        "polars": {"o": "native", "n": "None: the models work around the adapter instead."}
+      }
+    },
+    {
+      "group": "dbt features",
+      "label": "A macro that reads a model (run-operation)",
+      "cells": {
+        "duckrun": {"o": "native", "n": "dbt run-operation parity_fingerprint.", "path": "macros/parity_fingerprint.sql"},
+        "iceberg": {"o": "native", "n": "dbt run-operation parity_fingerprint.", "path": "macros/parity_fingerprint.sql"},
+        "ducklake": {"o": "native", "n": "dbt run-operation parity_fingerprint.", "path": "macros/parity_fingerprint.sql"},
+        "spark": {"o": "workaround", "n": "In-process through a dbtRunner callback: a separate run-operation would start a JVM without the session spark_session.py built.", "path": ".github/scripts/run_dbt.py"},
+        "polars": {"o": "workaround", "n": "run-operation never fills dbt-polars' relation cache, so a ref() in it fails; the fingerprint is taken with dbt show.", "path": ".github/scripts/run_dbt.py"}
+      }
+    },
+    {
+      "group": "Catalog & credentials",
+      "label": "Credentials",
+      "cells": {
+        "duckrun": {"o": "native", "n": "The adapter's token chain finds the az CLI login."},
+        "iceberg": {"o": "workaround", "n": "Two: the ATTACH bearer for the catalog, which vends a per-table SAS for Tables/ (duckdb-iceberg#1331), plus an azure secret for Files/. Vending covers Tables/ only.", "path": "dbt1/profiles.yml"},
+        "ducklake": {"o": "workaround", "n": "Two bearers: OneLake storage, and database.windows.net for the catalog SQL DB (forwarded as meta_access_token).", "path": "dbt1/profiles.yml"},
+        "spark": {"o": "workaround", "n": "Hadoop ABFS has no Azure CLI credential: WorkloadIdentityTokenProvider reads the job's GitHub OIDC token from a file rewritten every four minutes.", "path": ".github/scripts/spark_session.py"},
+        "polars": {"o": "workaround", "n": "Polars SQL read_csv() takes no credential: AZURE_STORAGE_TOKEN in the environment.", "path": ".github/scripts/run_dbt.py"}
+      }
+    },
+    {
+      "group": "Catalog & credentials",
+      "label": "Create a table in the catalog",
+      "cells": {
+        "duckrun": {"o": "native", "n": "A Delta table under Tables/."},
+        "iceberg": {"o": "workaround", "n": "OneLake vends nothing on createTable and rejects the follow-up metadata update: stage_create_tables: 0 and skip_create_table_metadata_updates: 1. default_schema must name a namespace that exists (dbo).", "path": "dbt1/profiles.yml"},
+        "ducklake": {"o": "workaround", "n": "The catalog SQL DB needs COLLATE Latin1_General_100_BIN2_UTF8 at creation, and shaping a fresh catalog takes minutes: three mssql timeouts at 600 s.", "path": "dbt1/profiles.yml"},
+        "spark": {"o": "native", "n": "Delta, once the schemas are created with LOCATION <lakehouse>/Tables/<schema>.", "path": ".github/scripts/spark_session.py"},
+        "polars": {"o": "native", "n": "pyiceberg, into the same OneLake REST catalog as iceberg."}
+      }
+    },
+    {
+      "group": "Catalog & credentials",
+      "label": "Catalog always reachable",
+      "cells": {
+        "duckrun": {"o": "native", "n": "No database in the path."},
+        "iceberg": {"o": "native", "n": "The REST catalog is a service."},
+        "ducklake": {"o": "workaround", "n": "The Fabric SQL DB auto-pauses. The first connection after that fails with 40613 while it resumes (about a minute); run_dbt.py waits and re-runs the build.", "path": ".github/scripts/run_dbt.py"},
+        "spark": {"o": "native", "n": "No database in the path."},
+        "polars": {"o": "native", "n": "The REST catalog is a service."}
+      }
+    },
+    {
+      "group": "Maintenance",
+      "label": "Table format written",
+      "cells": {
+        "duckrun": {"o": "native", "n": "Delta, via delta-rs."},
+        "iceberg": {"o": "native", "n": "Iceberg."},
+        "ducklake": {"o": "workaround", "n": "DuckLake parquet, plus delta_export() (no arguments) writing each table's _delta_log in place, which is why data_path is the lakehouse's Tables/.", "path": "dbt1/dbt_project.yml"},
+        "spark": {"o": "native", "n": "Delta, once the tree says +file_format: delta: dbt-spark writes parquet by default.", "path": "dbt1/dbt_project.yml"},
+        "polars": {"o": "native", "n": "Iceberg, via pyiceberg."}
+      }
+    },
+    {
+      "group": "Maintenance",
+      "label": "Compaction built in",
+      "cells": {
+        "duckrun": {"o": "native", "n": "Compaction on byte debt, vacuum after. No job to add."},
+        "iceberg": {"o": "workaround", "n": "A separate job, compact_iceberg.py, on iceberg_rewrite_data_files (DuckDB dev builds only). No snapshot expiry. Give it all three size bounds: by default it rewrites big files DOWN to the target.", "path": ".github/scripts/compact_iceberg.py"},
+        "ducklake": {"o": "workaround", "n": "on-run-end hooks: ducklake_merge_adjacent_files().", "path": "dbt1/dbt_project.yml"},
+        "spark": {"o": "no", "n": "Delta OPTIMIZE exists; dbt-spark does not run it."},
+        "polars": {"o": "no", "n": "Not compacted."}
+      }
+    },
+    {
+      "group": "Dialect",
+      "label": "Compare a string column to a number",
+      "cells": {
+        "duckrun": {"o": "native", "n": "The reader types the column DOUBLE.", "path": "macros/duckdb_read_csv.sql"},
+        "iceberg": {"o": "native", "n": "The reader types the column DOUBLE.", "path": "macros/duckdb_read_csv.sql"},
+        "ducklake": {"o": "native", "n": "The reader types the column DOUBLE.", "path": "macros/duckdb_read_csv.sql"},
+        "spark": {"o": "workaround", "silent": true, "n": "STRING != 0 casts the string to INT, which truncates: '0.5' != 0 is false. A bare SCADAVALUE != 0 dropped 12-16% of the intraday SCADA rows. Cast to DOUBLE.", "path": "dbt1/macros/spark_read_csv.sql"},
+        "polars": {"o": "native", "n": "Columns are strings here; the filter casts to DOUBLE explicitly.", "path": "macros/polars_read_csv.sql"}
+      }
+    },
+    {
+      "group": "Dialect",
+      "label": "CAST a slash date (2026/09/17)",
+      "cells": {
+        "duckrun": {"o": "native", "n": "CAST(... AS TIMESTAMPTZ) parses slashes.", "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql"},
+        "iceberg": {"o": "native", "n": "CAST(... AS TIMESTAMPTZ) parses slashes."},
+        "ducklake": {"o": "native", "n": "CAST(... AS TIMESTAMPTZ) parses slashes."},
+        "spark": {"o": "workaround", "silent": true, "n": "CAST(string AS TIMESTAMP) returns NULL for slashes instead of erroring. to_timestamp(..., 'yyyy/MM/dd HH:mm:ss').", "path": "dbt1/models/aemo/spark/marts/fct_scada.sql"},
+        "polars": {"o": "native", "n": "CAST(... AS TIMESTAMPTZ), on Polars main (pola-rs/polars#29878).", "path": "dbt1/models/aemo/polars/marts/fct_scada.sql"}
+      }
+    },
+    {
+      "group": "Dialect",
+      "label": "DuckDB's SQL text runs unchanged",
+      "cells": {
+        "duckrun": {"o": "native", "n": "It is DuckDB."},
+        "iceberg": {"o": "native", "n": "It is DuckDB."},
+        "ducklake": {"o": "native", "n": "It is DuckDB."},
+        "spark": {"o": "no", "n": "strftime -> date_format, INTERVAL -> date_sub, TIMESTAMPTZ -> TIMESTAMP, no DOUBLE PRECISION, split_part -> substring_index.", "path": "dbt1/models/aemo/spark/marts/fct_summary.sql"},
+        "polars": {"o": "workaround", "n": "Only on a pinned Polars main build: the IN-subquery and nested-WITH scoping fixes, TIMESTAMPTZ and generate_series (#29876-#29879) are not in a release.", "path": "requirements/polars.txt"}
+      }
+    },
+    {
+      "group": "Dialect",
+      "label": "Today's date",
+      "cells": {
+        "duckrun": {"o": "native", "n": "current_date."},
+        "iceberg": {"o": "native", "n": "current_date."},
+        "ducklake": {"o": "native", "n": "current_date."},
+        "spark": {"o": "native", "n": "current_date()."},
+        "polars": {"o": "no", "n": "No current_date / current_timestamp / now() in Polars SQL, by any spelling (pola-rs/polars#28798).", "path": "dbt1/tests/aemo/polars/assert_fct_summary_no_partial_dates.sql"}
+      }
+    },
+    {
+      "group": "Dialect",
+      "label": "Case-insensitive column names",
+      "cells": {
+        "duckrun": {"o": "native", "n": "duid resolves DUID."},
+        "iceberg": {"o": "native", "n": "duid resolves DUID."},
+        "ducklake": {"o": "native", "n": "duid resolves DUID."},
+        "spark": {"o": "native", "n": "Case-insensitive by default."},
+        "polars": {"o": "no", "n": "Case-sensitive: geo_data's header says DUID, and the DuckDB copies' duid does not resolve.", "path": "dbt1/models/aemo/polars/dimensions/dim_duid.sql"}
+      }
+    }
+  ]
+}

@@ -24,3 +24,6 @@ PLAN.md
 
 # Parity fingerprints are written by CI; a laptop run would poison the comparison.
 history/parity/*.json
+
+# The dashboard's run data is generated at publish time by .github/scripts/dashboard_data.py.
+dashboard/data/runs.json

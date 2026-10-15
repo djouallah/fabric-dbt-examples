@@ -53,7 +53,19 @@ def test_the_page_is_the_static_single_file():
     run = next(s["run"] for s in steps("site") if "docs generate" in str(s.get("run", "")))
     assert "--static" in run
     assemble = " ".join(str(s.get("run", "")) for s in steps("site"))
-    assert "static_index.html" in assemble
+    assert "static_index.html site/dbt/index.html" in assemble, (
+        "the DAG page is published at /dbt/; the root is the dashboard"
+    )
+
+
+def test_the_dashboard_is_the_root_and_carries_its_run_data():
+    """site/index.html is dashboard/index.html, and its Parity and Runs tabs read
+    data/runs.json, which is generated, never checked in -- so the assemble step must run
+    dashboard_data.py BEFORE copying dashboard/, or the page loads with no runs."""
+    assemble = " ".join(str(s.get("run", "")) for s in steps("site"))
+    gen = assemble.find("dashboard_data.py")
+    copy = assemble.find("cp -r dashboard/. site/")
+    assert gen != -1 and copy != -1 and gen < copy, assemble
 
 
 def test_the_catalog_is_checked_before_it_is_published():

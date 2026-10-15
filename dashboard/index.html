@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Five Engines, One Table</title>
+<meta name="description" content="One dbt gold layer on five engines over OneLake: parity, run times, what each engine and adapter supports, how the SQL differs, and the upstream bugs.">
+<style>
+/* Visual language of djouallah/lakehouse_benchmark's dashboard: same surfaces, ink, tabs,
+   chips, bars and tips, so the two pages read as one family. */
+:root {
+  --surface: #fcfcfb; --raised: #ffffff; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8984;
+  --grid: #d8d7d2; --track: #f0efeb; --accent: #2a78d6; --yes: #23955d; --no: #c2412d; --noop: #b07d00;
+  --duckrun: #2a78d6; --iceberg: #eb6834; --ducklake: #1baf7a; --spark: #d6468f; --polars: #8a5cd1;
+  --code: #f5f4f0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --raised: #222221; --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8984;
+    --grid: #3a3a37; --track: #262624; --accent: #3987e5; --yes: #3fbf7f; --no: #ef6a54; --noop: #d9a520;
+    --duckrun: #3987e5; --iceberg: #d95926; --ducklake: #199e70; --spark: #e05a9c; --polars: #9b6ee0;
+    --code: #1f1f1e;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--surface); color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 1440px; margin: 0 auto; padding: 20px 16px 24px; }
+h1 { font-size: clamp(24px, 5vw, 32px); line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 16px; }
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.top { display: flex; align-items: center; gap: 20px; flex: none; }
+.top-link { color: var(--ink-2); font-weight: 600; text-decoration: none; margin-top: 6px; }
+.top-link:hover, .top-link[aria-current] { color: var(--ink); text-decoration: underline; }
+.gh { color: var(--ink-2); flex: none; margin-top: 6px; transition: color .15s, transform .15s; }
+.gh:hover, .gh:focus-visible { color: var(--ink); transform: scale(1.1); }
+.sub { font-size: 15px; font-weight: 400; letter-spacing: 0; color: var(--ink-2); margin-left: 8px; }
+.lede { color: var(--ink-2); margin: 0 0 16px; max-width: 70ch; }
+.tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--track); flex-wrap: wrap; }
+.tabs button, .chips button { font: inherit; border: 0; cursor: pointer; color: var(--ink-2); background: transparent; }
+.tabs button { flex: 1 1 auto; padding: 8px 16px; border-radius: 9px; font-weight: 600; }
+.tabs button[aria-selected="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / .12); }
+.chips { display: flex; gap: 8px; margin: 12px 0 6px; flex-wrap: wrap; }
+.chips button { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--grid); font-size: 13px; font-variant-numeric: tabular-nums; }
+.chips button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); }
+.caption { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; min-height: 1.5em; }
+.caption a, .details a, .card a, .strip a, .panel a, .detail a { color: var(--accent); }
+.empty { color: var(--ink-3); font-style: italic; padding: 24px 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+
+/* Bars (Runs) */
+.chart { display: grid; gap: 6px; }
+.row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 12px;
+  opacity: 0; transform: translateY(6px); animation: in .45s ease forwards; }
+@keyframes in { to { opacity: 1; transform: none; } }
+.name { font-weight: 600; font-size: 14px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane { position: relative; height: 28px; display: flex; align-items: center; gap: 10px; cursor: default; min-width: 0; }
+.bar { height: 100%; width: 0; border-radius: 0 4px 4px 0; background: var(--c);
+  transition: width .8s cubic-bezier(.2, .8, .2, 1), filter .15s; flex: none; }
+.lane:hover .bar, .lane:focus .bar { filter: brightness(1.12); }
+.lane:focus { outline: none; }
+.lane:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.val { font-size: 13px; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.val .x { color: var(--ink-2); }
+.failed .bar { background: repeating-linear-gradient(135deg, var(--c) 0 4px, transparent 4px 8px); }
+.failed .val { color: var(--no); }
+.speedup { margin-top: 14px; padding: 10px 14px; border-radius: 12px; background: var(--track); font-size: 14px; color: var(--ink-2); }
+.speedup b { color: var(--ink); font-size: 18px; }
+
+/* Tip */
+.tip { position: fixed; z-index: 10; pointer-events: none; opacity: 0; transition: opacity .12s;
+  background: var(--raised); color: var(--ink); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 10px 12px; font-size: 13px; box-shadow: 0 6px 24px rgb(0 0 0 / .18); max-width: 320px; }
+.tip.on { opacity: 1; }
+.tip .t { font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.tip .k { color: var(--ink-2); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); flex: none; }
+
+/* Parity */
+.verdict { margin: 4px 0 14px; padding: 12px 16px; border-radius: 12px; background: var(--track); font-size: 15px; color: var(--ink-2); }
+.verdict b { color: var(--ink); font-size: 20px; }
+.verdict.ok b { color: var(--yes); }
+.verdict.bad b { color: var(--no); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.card { background: var(--raised); border: 1px solid var(--grid); border-top: 4px solid var(--c); border-radius: 12px; padding: 12px 14px;
+  opacity: 0; transform: translateY(6px); animation: in .45s ease forwards; }
+.card h3 { margin: 0 0 2px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.card .adapter { color: var(--ink-3); font-size: 12px; margin-bottom: 8px; }
+.card dl { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; margin: 0; font-size: 13px; }
+.card dt { color: var(--ink-2); }
+.card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mk { font-weight: 700; text-align: center; width: 1.2em; }
+.mk.y { color: var(--yes); } .mk.n { color: var(--no); } .mk.r { color: var(--ink-3); font-weight: 400; }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--grid); color: var(--ink-2); white-space: nowrap; }
+.tag.no { border-color: var(--no); color: var(--no); }
+.tag.yes { border-color: var(--yes); color: var(--yes); }
+.tag.warn { border-color: var(--noop); color: var(--noop); }
+.card.off { opacity: .6 !important; border-top-style: dashed; }
+.card .note { font-size: 12px; color: var(--no); margin-top: 8px; }
+h2.sec { font-size: 15px; margin: 22px 0 6px; }
+.strip { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.strip th { font-weight: 600; color: var(--ink-2); text-align: center; padding: 4px 6px; }
+.strip th:first-child, .strip td:first-child { text-align: left; }
+.strip td { padding: 5px 6px; border-top: 1px solid var(--track); text-align: center; }
+.strip tr.sel td { background: var(--track); }
+.strip tbody tr { cursor: pointer; }
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--track); border: 1px solid var(--grid); vertical-align: middle; }
+.dot.match { background: var(--yes); border-color: var(--yes); }
+.dot.diff { background: var(--no); border-color: var(--no); }
+.dot.solo { border: 2px solid var(--yes); background: transparent; }
+.dot.failed { background: repeating-linear-gradient(135deg, var(--no) 0 2px, transparent 2px 4px); border-color: var(--no); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin: 8px 0; align-items: center; }
+.legend span { display: inline-flex; gap: 6px; align-items: center; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Capability matrix */
+.cap { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 640px; font-size: 14px; }
+.cap th, .cap td { padding: 6px 8px; border-bottom: 1px solid var(--track); }
+.cap thead th { position: sticky; top: 0; background: var(--surface); font-size: 13px; text-align: center; white-space: nowrap; }
+.cap thead th .sw { margin-right: 6px; vertical-align: -1px; }
+.cap td:first-child, .cap th:first-child { text-align: left; position: sticky; left: 0; background: var(--surface); }
+.cap td:first-child { font-weight: 500; max-width: 260px; }
+.cap tr.grp td { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); padding-top: 16px; border-bottom: 0; }
+.cap td.c { text-align: center; }
+.cell { font: inherit; background: none; border: 0; cursor: pointer; width: 100%; padding: 5px 0; border-radius: 6px; color: var(--ink); line-height: 1; position: relative; }
+.ic { display: inline-block; width: 16px; height: 16px; border-radius: 50%; vertical-align: middle; position: relative; }
+.ic.native { background: var(--yes); }
+.ic.workaround { border: 2px solid var(--noop); background: linear-gradient(90deg, var(--noop) 50%, transparent 50%); }
+.ic.no { border: 2px solid var(--no); }
+.ic.no::before, .ic.no::after { content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 2px; background: var(--no); transform: translate(-50%, -50%) rotate(45deg); }
+.ic.no::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.cell:hover, .cell:focus-visible, .cell[aria-pressed="true"] { background: var(--track); outline: none; }
+.o-native { color: var(--yes); } .o-workaround { color: var(--noop); } .o-no { color: var(--no); }
+.cell .s, .legend .s { display: inline-block; font-size: 10px; font-weight: 800; color: #fff; background: var(--no); border-radius: 50%; width: 14px; height: 14px; line-height: 14px; text-align: center; vertical-align: middle; margin-left: -4px; transform: translateY(-6px); }
+.legend .s { margin-left: 0; transform: none; }
+@media (max-width: 600px) { .cap { min-width: 520px; font-size: 13px; } .cap td:first-child { max-width: 150px; } }
+.detail { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--track); font-size: 14px; color: var(--ink-2); min-height: 3em; }
+.detail b { color: var(--ink); }
+
+/* Syntax */
+.silent { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--no); color: var(--ink); font-size: 14px; }
+.silent b { color: var(--no); }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+.panel { background: var(--raised); border: 1px solid var(--grid); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;
+  opacity: 0; transform: translateY(6px); animation: in .45s ease forwards; }
+.panel .h { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 12px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--grid); }
+.panel .h span { display: inline-flex; align-items: center; gap: 6px; }
+.panel pre { margin: 0; padding: 12px; background: var(--code); white-space: pre-wrap; overflow-wrap: anywhere; flex: 1; line-height: 1.45; }
+.panel .f { padding: 6px 12px; font-size: 12px; border-top: 1px solid var(--grid); overflow-wrap: anywhere; }
+
+/* Bugs / About */
+.details { color: var(--ink-2); margin-top: 8px; max-width: 980px; }
+.details h3 { font-size: 15px; color: var(--ink); margin: 20px 0 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.details h3 a { color: var(--ink); text-decoration: none; }
+.details h3 a:hover { text-decoration: underline; }
+.details p { margin: 0 0 12px; }
+.details ul { margin: 0; padding-left: 18px; }
+.details li { margin: 6px 0; overflow-wrap: anywhere; }
+.details b { color: var(--ink); }
+.details .here { font-size: 13px; margin: 6px 0 0; }
+.details .asof { font-size: 12px; color: var(--ink-3); }
+.eng { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Five engines, one table <span class="sub">dbt · OneLake · AEMO</span></h1>
+    <nav class="top">
+      <a class="top-link" id="bugs-link" href="#bugs">Bugs</a>
+      <a class="top-link" id="about-link" href="#about">About</a>
+      <a class="top-link" href="dbt/" title="The dbt DAG and catalog">DAG</a>
+      <a class="gh" href="https://github.com/djouallah/fabric-dbt-examples" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 16 16" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    </nav>
+  </header>
+  <p class="lede">The same dbt gold layer, built on five engines into one OneLake lakehouse. The business logic is identical; what differs is the dialect and what each engine and adapter will actually do.</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <section id="p-parity" hidden>
+    <div class="chips" id="parity-chips"></div>
+    <p class="caption" id="parity-caption"></p>
+    <div id="parity-verdict"></div>
+    <div class="cards" id="parity-cards"><div class="empty">Loading runs…</div></div>
+    <h2 class="sec">Recent runs</h2>
+    <div class="legend">
+      <span><i class="dot match"></i>same table as the reference</span>
+      <span><i class="dot diff"></i>differs</span>
+      <span><i class="dot solo"></i>built alone, nothing to compare</span>
+      <span><i class="dot failed"></i>leg failed this run</span>
+      <span><i class="dot"></i>not built</span>
+    </div>
+    <div class="scroll"><table class="strip" id="parity-strip"></table></div>
+  </section>
+
+  <section id="p-runs" hidden>
+    <div class="chips" id="runs-chips"></div>
+    <p class="caption" id="runs-caption"></p>
+    <div class="chart" id="runs-chart"><div class="empty">Loading runs…</div></div>
+    <div id="runs-total"></div>
+  </section>
+
+  <section id="p-engines" hidden>
+    <div class="chips" id="cap-chips"></div>
+    <div class="legend">
+      <span><i class="ic native"></i> works as is</span>
+      <span><i class="ic workaround"></i> needs a workaround</span>
+      <span><i class="ic no"></i> not available</span>
+      <span><i class="s">!</i> fails silently: a wrong result, no error</span>
+    </div>
+    <div class="scroll"><table class="cap" id="cap"></table></div>
+    <div class="detail" id="cap-detail">Pick a cell for the detail.</div>
+  </section>
+
+  <section id="p-syntax" hidden>
+    <div class="chips" id="syn-chips"></div>
+    <p class="caption" id="syn-caption"></p>
+    <div id="syn-silent"></div>
+    <div class="panels" id="syn-panels"></div>
+  </section>
+
+  <section class="details" id="p-bugs" hidden></section>
+
+  <section class="details" id="p-about" hidden>
+    <p>dbt promises that the engine is abstract: a model is a <code>SELECT</code>, the adapter does the rest, and changing <code>--target</code> gets the same table somewhere else. For the business logic that holds. The eight models compute the same numbers on all five engines, and <a href="#parity">Parity</a> checks it on every run.</p>
+    <p>What does not abstract away shows up on every model, and it is not the axis people expect. Whether an engine is distributed or single-node barely matters: nothing in the five copies of a model cares that Spark has executors and DuckDB has one process.</p>
+    <p>What matters is the dialect (<a href="#syntax">Syntax</a>), and what each engine, adapter and catalog actually implements: which merge shapes the catalog accepts, whether the adapter honours a config or silently ignores it, how a CSV can be read at all, whether there are hooks (<a href="#engines">Engines</a>).</p>
+    <p>When an engine or adapter gets it wrong, the bug is filed upstream (<a href="#bugs">Bugs</a>).</p>
+    <p>The engines: <b>duckrun</b> (DuckDB writing Delta via delta-rs), <b>iceberg</b> (dbt-duckdb into the OneLake Iceberg REST catalog), <b>ducklake</b> (dbt-duckdb, DuckLake with its catalog in a Fabric SQL DB, plus a Delta export), <b>spark</b> (dbt-spark on local PySpark, Delta) and <b>polars</b> (dbt-polars, Polars SQL, Iceberg via pyiceberg).</p>
+    <p>More: <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/thesis.md">the thesis</a>, <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/engine-nuances.md">engine nuances</a>, <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/candidate-engines.md">candidate engines</a>, and <a href="dbt/">the dbt DAG and catalog</a>.</p>
+  </section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const REPO = "https://github.com/djouallah/fabric-dbt-examples";
+const ENG = {
+  duckrun:  {label: "duckrun",  adapter: "duckrun · Delta"},
+  iceberg:  {label: "iceberg",  adapter: "dbt-duckdb · Iceberg"},
+  ducklake: {label: "ducklake", adapter: "dbt-duckdb · DuckLake"},
+  spark:    {label: "spark",    adapter: "dbt-spark · Delta"},
+  polars:   {label: "polars",   adapter: "dbt-polars · Iceberg"},
+};
+const ORDER = Object.keys(ENG);
+const TABS = [
+  {id: "parity", title: "Parity"}, {id: "runs", title: "Runs"}, {id: "engines", title: "Engines"},
+  {id: "syntax", title: "Syntax"}, {id: "bugs", title: "Bugs"},
+];
+const PAGES = [...TABS.map(t => t.id), "about"];
+const OUTCOME = {native: ["●", "works as is"], workaround: ["◐", "needs a workaround"], no: ["✕", "not available"]};
+const FIELD = {rows_total: "rows", duids: "units", days: "days", date_min: "from", date_max: "to", mw_sum: "Σ mw", price_sum: "Σ price"};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const blob = p => `${REPO}/blob/main/${p}`;
+const sw = e => `<i class="sw" style="--c:var(--${e})"></i>`;
+const cache = {};
+const load = name => cache[name] ??= fetch(`data/${name}.json`).then(r => {
+  if (!r.ok) throw new Error(`data/${name}.json: HTTP ${r.status}`);
+  return r.json();
+});
+const fail = (el, err) => { el.innerHTML = `<div class="empty">Could not load the data (${esc(err.message)}).</div>`; };
+const when = iso => iso ? new Date(iso).toLocaleString("en-GB", {day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC"}) + " UTC" : "?";
+const dur = s => s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${Math.round(s)}s`;
+const secs = (a, b) => (new Date(b) - new Date(a)) / 1000;
+
+// ---------- tip ----------
+const tip = $("tip");
+function showTip(ev, html) {
+  tip.innerHTML = html; tip.classList.add("on");
+  const r = tip.getBoundingClientRect(), pad = 12;
+  let x = (ev.clientX ?? 0) + 14, y = (ev.clientY ?? 0) + 14;
+  if (ev.clientX === undefined) { const b = ev.target.getBoundingClientRect(); x = b.right + 8; y = b.top; }
+  if (x + r.width > innerWidth - pad) x = Math.max(pad, innerWidth - r.width - pad);
+  if (y + r.height > innerHeight - pad) y = Math.max(pad, innerHeight - r.height - pad);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => tip.classList.remove("on");
+function bindTip(el, html) {
+  el.addEventListener("mousemove", ev => showTip(ev, html));
+  el.addEventListener("focus", ev => showTip(ev, html));
+  el.addEventListener("mouseleave", hideTip);
+  el.addEventListener("blur", hideTip);
+}
+
+// ---------- routing ----------
+$("tabs").innerHTML = TABS.map(t => `<button role="tab" data-tab="${t.id}">${t.title}</button>`).join("");
+$("tabs").addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) location.hash = b.dataset.tab; });
+function route() {
+  const [page = "parity", sub] = decodeURIComponent(location.hash.slice(1)).split("/");
+  const id = PAGES.includes(page) ? page : "parity";
+  for (const p of PAGES) $("p-" + p).hidden = p !== id;
+  for (const b of $("tabs").children) b.setAttribute("aria-selected", b.dataset.tab === id);
+  $("bugs-link").toggleAttribute("aria-current", id === "bugs");
+  $("about-link").toggleAttribute("aria-current", id === "about");
+  hideTip();
+  ({parity: renderParity, runs: renderRuns, engines: renderEngines, syntax: renderSyntax, bugs: renderBugs})[id]?.(sub);
+}
+addEventListener("hashchange", route);
+
+// ---------- parity ----------
+// The rule is parity.py's (EXACT / APPROX / REL_TOL), shipped in runs.json as `rule` by
+// dashboard_data.py, and so is the reference: the first engine in sorted order, as compare() does.
+// A leg that FAILED this run still leaves a fingerprint of whatever an earlier run wrote, so it is
+// shown but not graded: it says nothing about this run's table.
+function grade(run, rule) {
+  const names = Object.keys(run.parity).filter(e => !legFailed(run, e)).sort();
+  const base = names[0], b = run.parity[base], cells = {};
+  let agree = true;
+  for (const e of names) {
+    const fp = run.parity[e], c = {};
+    for (const f of rule.exact) c[f] = {ok: fp[f] === b[f]};
+    for (const f of rule.approx) {
+      const x = +b[f] || 0, y = +fp[f] || 0, rel = Math.abs(x - y) / Math.max(Math.abs(x), Math.abs(y), 1);
+      c[f] = {ok: rel <= rule.rel_tol, rel};
+    }
+    c.all = Object.values(c).every(v => v.ok);
+    if (!c.all) agree = false;
+    cells[e] = c;
+  }
+  return {base, names, cells, agree};
+}
+const legFailed = (run, e) => run.legs[e] && run.legs[e].outcome !== "success";
+const fmt = (f, v) => typeof v === "number" ? (Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", {maximumFractionDigits: 2})) : esc(v);
+
+function renderParity(sub) {
+  load("runs").then(d => {
+    const graded = r => Object.keys(r.parity).filter(e => !legFailed(r, e)).length >= 2;
+    const runs = d.runs.filter(graded).reverse();
+    if (!runs.length) { $("parity-cards").innerHTML = `<div class="empty">No run has fingerprinted two engines yet.</div>`; return; }
+    const run = runs.find(r => r.run === sub) || runs[0];
+    const g = grade(run, d.rule);
+    $("parity-chips").innerHTML = runs.slice(0, 8).map(r =>
+      `<button aria-pressed="${r === run}" data-run="${r.run}">${when(r.finished)} · ${grade(r, d.rule).names.length} engines</button>`).join("");
+    $("parity-chips").onclick = ev => { const b = ev.target.closest("button"); if (b) location.hash = `parity/${b.dataset.run}`; };
+    $("parity-caption").innerHTML = `Run <a href="${esc(run.url)}">${esc(run.run)}</a> (${esc(run.sha)}) · fct_summary fingerprinted through each engine's own adapter · counts and dates exact, money within ${d.rule.rel_tol} relative · reference: <b>${esc(g.base)}</b>, the first name in order, as parity.py does.`;
+    const bad = g.names.filter(e => !g.cells[e].all);
+    const failed = ORDER.filter(e => legFailed(run, e));
+    const tail = failed.length ? ` The ${failed.map(esc).join(", ")} leg failed this run and is not graded.` : "";
+    $("parity-verdict").innerHTML = g.agree
+      ? `<div class="verdict ok"><b>${g.names.length} of ${g.names.length} agree.</b> Same gold table on every engine that built.${tail}</div>`
+      : `<div class="verdict bad"><b>${g.names.length - bad.length} of ${g.names.length} agree.</b> ${bad.map(esc).join(", ")} ${bad.length > 1 ? "differ" : "differs"} from ${esc(g.base)}.${tail}</div>`;
+    $("parity-cards").innerHTML = ORDER.filter(e => run.parity[e]).map((e, i) => {
+      const fp = run.parity[e], c = g.cells[e], ref = e === g.base, off = !c;
+      const rows = [...d.rule.exact, ...d.rule.approx].map(f => {
+        const m = ref || off ? `<span class="mk r">·</span>` : c[f].ok ? `<span class="mk y">✓</span>` : `<span class="mk n">✗</span>`;
+        return `<dt>${FIELD[f] || f}</dt><dd>${fmt(f, fp[f])}</dd>${m}`;
+      }).join("");
+      const status = off ? `<span class="tag no">leg failed</span>` : ref ? `<span class="tag">reference</span>` : c.all ? `<span class="tag yes">match</span>` : `<span class="tag no">differs</span>`;
+      const note = legFailed(run, e) ? `<div class="note">The leg failed this run: these numbers are the table an earlier run left.</div>` : "";
+      return `<div class="card${off ? " off" : ""}" style="--c:var(--${e});animation-delay:${i * 50}ms"><h3>${esc(ENG[e].label)} ${status}</h3><div class="adapter">${esc(ENG[e].adapter)}</div><dl>${rows}</dl>${note}</div>`;
+    }).join("");
+    for (const card of $("parity-cards").children) {
+      // Hover on a money row shows how far it is from the reference.
+      card.querySelectorAll("dd").forEach((dd, j) => {
+        const f = [...d.rule.exact, ...d.rule.approx][j], e = ORDER.filter(x => run.parity[x])[[...$("parity-cards").children].indexOf(card)];
+        const c = g.cells[e]?.[f];
+        if (c && c.rel !== undefined && e !== g.base) bindTip(dd, `<div class="t">${esc(e)} · ${FIELD[f]}</div><span class="k">relative difference to ${esc(g.base)}</span> ${c.rel.toExponential(1)}<br><span class="k">tolerance</span> ${d.rule.rel_tol}`);
+      });
+    }
+    const strip = d.runs.filter(r => Object.keys(r.parity).length || Object.keys(r.legs).length).reverse().slice(0, 20);
+    $("parity-strip").innerHTML = `<thead><tr><th>run</th>${ORDER.map(e => `<th>${sw(e)} ${esc(e)}</th>`).join("")}</tr></thead><tbody>` +
+      strip.map(r => {
+        const gr = graded(r) ? grade(r, d.rule) : null;
+        const dots = ORDER.map(e => {
+          let cls = "", t = "not built";
+          if (legFailed(r, e)) { cls = "failed"; t = "leg failed"; }
+          else if (r.parity[e] && gr && gr.cells[e]) { cls = gr.cells[e].all ? "match" : "diff"; t = e === gr.base ? "reference" : gr.cells[e].all ? "matches the reference" : "differs from the reference"; }
+          else if (r.parity[e] || r.legs[e]) { cls = "solo"; t = "built alone: nothing to compare with"; }
+          return `<td><i class="dot ${cls}" title="${esc(e)}: ${t}"></i></td>`;
+        }).join("");
+        return `<tr data-run="${r.run}" class="${r === run ? "sel" : ""}"><td>${when(r.finished)} <a href="${esc(r.url)}" onclick="event.stopPropagation()">${esc(r.run)}</a></td>${dots}</tr>`;
+      }).join("") + "</tbody>";
+    $("parity-strip").onclick = ev => {
+      const tr = ev.target.closest("tr[data-run]");
+      if (tr && strip.find(r => r.run === tr.dataset.run && graded(r))) location.hash = `parity/${tr.dataset.run}`;
+    };
+  }).catch(err => fail($("parity-cards"), err));
+}
+
+// ---------- runs ----------
+function renderRuns(sub) {
+  load("runs").then(d => {
+    const runs = d.runs.filter(r => Object.values(r.legs).some(l => l.started && l.finished)).reverse();
+    if (!runs.length) { $("runs-chart").innerHTML = `<div class="empty">No timed legs recorded yet.</div>`; return; }
+    const run = runs.find(r => r.run === sub) || runs.find(r => Object.keys(r.legs).length >= 2) || runs[0];
+    $("runs-chips").innerHTML = runs.slice(0, 12).map(r =>
+      `<button aria-pressed="${r === run}" data-run="${r.run}">${when(r.finished)} · ${esc(r.inputs.engines || "?")}</button>`).join("");
+    $("runs-chips").onclick = ev => { const b = ev.target.closest("button"); if (b) location.hash = `runs/${b.dataset.run}`; };
+    const i = run.inputs;
+    $("runs-caption").innerHTML = `Run <a href="${esc(run.url)}">${esc(run.run)}</a> · mode <b>${esc(i.mode || "not recorded")}</b> · process_limit <b>${esc(i.process_limit ?? "?")}</b> files per fact model · build + tests + fingerprint, per leg. The legs run in parallel; a leg's time depends on the backlog it folded, so compare engines within one run, not across runs.`;
+    const legs = ORDER.filter(e => run.legs[e]?.started && run.legs[e]?.finished).map(e => ({e, s: secs(run.legs[e].started, run.legs[e].finished), ...run.legs[e]}));
+    const max = Math.max(...legs.map(l => l.s));
+    $("runs-chart").innerHTML = legs.map((l, k) =>
+      `<div class="row ${l.outcome === "success" ? "" : "failed"}" style="--c:var(--${l.e});animation-delay:${k * 60}ms">
+        <div class="name">${esc(l.e)}</div>
+        <div class="lane" tabindex="0"><div class="bar" data-w="${(l.s / max * 100).toFixed(1)}"></div>
+        <span class="val">${dur(l.s)}${l.outcome === "success" ? "" : ` <span class="x">· ${esc(l.outcome)}</span>`}</span></div></div>`).join("");
+    requestAnimationFrame(() => document.querySelectorAll("#runs-chart .bar").forEach(b => b.style.width = `calc((100% - 110px) * ${b.dataset.w / 100})`));
+    [...$("runs-chart").querySelectorAll(".lane")].forEach((lane, k) => {
+      const l = legs[k];
+      bindTip(lane, `<div class="t">${sw(l.e)}${esc(l.e)}</div><span class="k">started</span> ${when(l.started)}<br><span class="k">finished</span> ${when(l.finished)}<br><span class="k">outcome</span> ${esc(l.outcome)}`);
+    });
+    $("runs-total").innerHTML = run.started && run.finished
+      ? `<div class="speedup">Whole run, landing to record: <b>${dur(secs(run.started, run.finished))}</b>. Spark is local PySpark on the runner; the other four run in-process on the runner in local mode or in the deployed notebook in Fabric mode.</div>` : "";
+  }).catch(err => fail($("runs-chart"), err));
+}
+
+// ---------- engines ----------
+let capGroup = "All";
+function renderEngines() {
+  load("capability").then(d => {
+    const groups = ["All", ...d.groups];
+    $("cap-chips").innerHTML = groups.map(g => `<button aria-pressed="${g === capGroup}">${esc(g)}</button>`).join("");
+    $("cap-chips").onclick = ev => { const b = ev.target.closest("button"); if (b) { capGroup = b.textContent; renderEngines(); } };
+    const rows = d.rows.filter(r => capGroup === "All" || r.group === capGroup);
+    let html = `<thead><tr><th></th>${d.engines.map(e => `<th>${sw(e)}${esc(e)}</th>`).join("")}</tr></thead><tbody>`, last = null;
+    rows.forEach((r, ri) => {
+      if (r.group !== last) { html += `<tr class="grp"><td colspan="${d.engines.length + 1}">${esc(r.group)}</td></tr>`; last = r.group; }
+      html += `<tr><td>${esc(r.label)}</td>` + d.engines.map(e => {
+        const c = r.cells[e], word = OUTCOME[c.o][1];
+        return `<td class="c"><button class="cell o-${c.o}" data-r="${ri}" data-e="${e}" aria-label="${esc(e)}: ${word}${c.silent ? ", fails silently" : ""}"><i class="ic ${c.o}"></i>${c.silent ? `<span class="s">!</span>` : ""}</button></td>`;
+      }).join("") + "</tr>";
+    });
+    $("cap").innerHTML = html + "</tbody>";
+    const detail = (r, e) => {
+      const c = r.cells[e], word = OUTCOME[c.o][1];
+      return `<b>${esc(r.label)}</b> · ${sw(e)} <b>${esc(e)}</b> · <i class="ic ${c.o}"></i> ${word}${c.silent ? ` · <span class="tag no">fails silently</span>` : ""}<br>${esc(c.n)}${c.path ? `<br><a href="${blob(c.path)}">${esc(c.path)}</a>` : ""}`;
+    };
+    $("cap").querySelectorAll(".cell").forEach(btn => {
+      const r = rows[btn.dataset.r], e = btn.dataset.e, c = r.cells[e];
+      bindTip(btn, `<div class="t">${sw(e)}${esc(e)}</div><span class="o-${c.o}">${OUTCOME[c.o][1]}</span>${c.silent ? ` · <b class="o-no">silent</b>` : ""}<br>${esc(c.n)}`);
+      btn.addEventListener("click", () => {
+        $("cap").querySelectorAll(".cell[aria-pressed]").forEach(x => x.removeAttribute("aria-pressed"));
+        btn.setAttribute("aria-pressed", "true");
+        $("cap-detail").innerHTML = detail(r, e);
+      });
+    });
+  }).catch(err => fail($("cap"), err));
+}
+
+// ---------- syntax ----------
+function renderSyntax(sub) {
+  load("syntax").then(d => {
+    const s = d.concepts.find(c => c.id === sub) || d.concepts[0];
+    $("syn-chips").innerHTML = d.concepts.map(c =>
+      `<button aria-pressed="${c === s}" data-id="${c.id}">${c.silent ? "! " : ""}${esc(c.title)}</button>`).join("");
+    $("syn-chips").onclick = ev => { const b = ev.target.closest("button"); if (b) location.hash = `syntax/${b.dataset.id}`; };
+    $("syn-caption").textContent = s.why;
+    $("syn-silent").innerHTML = s.silent ? `<div class="silent"><b>Fails silently.</b> ${esc(s.silent)}</div>` : "";
+    $("syn-panels").innerHTML = s.panels.map((p, i) =>
+      `<div class="panel" style="animation-delay:${i * 60}ms"><div class="h">${p.engines.map(e => `<span>${sw(e)}${esc(e)}</span>`).join("")}</div>
+       <pre><code>${esc(p.code)}</code></pre><div class="f"><a href="${blob(p.path)}">${esc(p.path)}</a></div></div>`).join("");
+  }).catch(err => fail($("syn-panels"), err));
+}
+
+// ---------- bugs ----------
+const engs = list => list.map(e => `<span class="eng">${sw(e)}${esc(e)}</span>`).join(" ");
+const statusTag = s => `<span class="tag ${s === "open" ? "warn" : "yes"}">${esc(s)}</span>`;
+function renderBugs() {
+  load("bugs").then(d => {
+    let html = `<p>Real bugs and gaps in the engines, adapters and catalogs this repo runs on, each with the upstream issue and what the repo does about it. Status as of <b>${esc(d.as_of)}</b>. <span class="tag no">silent</span> means a wrong result or a no-op with no error.</p>`;
+    for (const p of d.projects) {
+      html += `<h3><a href="${esc(p.repo)}">${esc(p.name)}</a> ${engs(p.engines)}</h3><ul>` + p.items.map(it =>
+        `<li>${statusTag(it.status)} <a href="${esc(it.url)}">${esc(it.id)}</a> ${it.kind === "gap" ? `<span class="tag">gap</span> ` : ""}${it.silent ? `<span class="tag no">silent</span> ` : ""}${esc(it.text)}${it.extra ? ` (<a href="${esc(it.extra.url)}">${esc(it.extra.id)}</a>)` : ""}</li>`).join("") +
+        `</ul><p class="here"><b>Here:</b> ${esc(p.here)}</p>`;
+    }
+    html += `<h3>Seen here, no public issue</h3><ul>` + d.unfiled.map(u =>
+      `<li><b>${esc(u.name)}</b> ${engs(u.engines)} ${u.silent ? `<span class="tag no">silent</span> ` : ""}${esc(u.text)} <a href="${blob(u.source)}">Details</a></li>`).join("") + "</ul>";
+    html += `<h3>Tried, not added</h3><ul>` + d.tried.map(t =>
+      `<li><b><a href="${esc(t.repo)}">${esc(t.name)}</a></b>: ${esc(t.text)} ${statusTag(t.issue.status)} <a href="${esc(t.issue.url)}">${esc(t.issue.id)}</a>. <a href="${blob(t.details)}">Details</a></li>`).join("") + "</ul>";
+    $("p-bugs").innerHTML = html;
+  }).catch(err => fail($("p-bugs"), err));
+}
+
+route();
+</script>
+</body>
+</html>

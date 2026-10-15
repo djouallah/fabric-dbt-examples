@@ -1,8 +1,14 @@
 name: docs
 
-# THE DAG AND THE CATALOG, PUBLISHED. Runs `dbt docs generate --static` and deploys the one
-# self-contained page it produces to GitHub Pages -- https://djouallah.github.io/fabric-dbt-examples/.
+# THE DASHBOARD, AND THE DAG AND THE CATALOG, PUBLISHED to GitHub Pages --
+# https://djouallah.github.io/fabric-dbt-examples/. The root is the dashboard (`dashboard/`: static
+# HTML, its hand-curated data/*.json, and data/runs.json generated here from history/runs/ by
+# dashboard_data.py); /dbt/ is the one self-contained page `dbt docs generate --static` produces.
 # It builds nothing, commits nothing and spends no Fabric compute.
+#
+# The gate below is duckrun's, so the dashboard's run data refreshes on an `all` or `duckrun`
+# pipeline run and on a manual dispatch -- not after a run that built only another engine. That
+# run's record is still committed; the next publish picks it up.
 #
 #   pipeline         builds, records the run, commits history/runs/ + history/parity/   dispatch
 #   Capacity units   reads the metrics model, commits history/cu.json     after pipeline · daily · dispatch
@@ -148,12 +154,18 @@ jobs:
             dbt1/target/catalog.json dbt1/target/manifest.json
 
       # `--static` writes target/static_index.html -- manifest and catalog inlined, no sidecar
-      # JSON, no CDN. That single file IS the site; nothing else from target/ is published.
+      # JSON, no CDN. That single file IS the DAG page, at /dbt/; nothing else from target/ is
+      # published. The dashboard is site/index.html: dashboard/ copied as it stands, plus the
+      # run data generated from the history/ this checkout carries.
       - name: Assemble the site
         run: |
           set -euo pipefail
-          mkdir -p site
-          cp dbt1/target/static_index.html site/index.html
+          mkdir -p site/dbt
+          cp dbt1/target/static_index.html site/dbt/index.html
+          python .github/scripts/dashboard_data.py --out dashboard/data/runs.json
+          cp -r dashboard/. site/
+          test -f site/index.html
+          touch site/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3
         with:

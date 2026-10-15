@@ -1,0 +1,91 @@
+{
+  "as_of": "2026-10-15",
+  "projects": [
+    {
+      "name": "Polars",
+      "repo": "https://github.com/pola-rs/polars",
+      "engines": ["polars"],
+      "items": [
+        {"url": "https://github.com/pola-rs/polars/issues/29876", "id": "#29876", "status": "fixed on main", "kind": "bug",
+         "text": "An unqualified column in an IN-subquery is resolved against the outer tables and reported ambiguous."},
+        {"url": "https://github.com/pola-rs/polars/issues/29877", "id": "#29877", "status": "fixed on main", "kind": "bug",
+         "text": "WITH inside a derived table is not resolved (\"relation 'x' was not found\"), though it works inside a CTE."},
+        {"url": "https://github.com/pola-rs/polars/issues/29878", "id": "#29878", "status": "fixed on main", "kind": "gap",
+         "text": "No time-zone-aware timestamps in SQL: CAST AS TIMESTAMPTZ."},
+        {"url": "https://github.com/pola-rs/polars/issues/29879", "id": "#29879", "status": "fixed on main", "kind": "gap",
+         "text": "No generate_series in SQL."},
+        {"url": "https://github.com/pola-rs/polars/pull/29917", "id": "#29917", "status": "fixed on main", "kind": "gap",
+         "text": "SQL read_csv() took no named options, so a ragged file could not be read with the right width."},
+        {"url": "https://github.com/pola-rs/polars/issues/28798", "id": "#28798", "status": "open", "kind": "gap",
+         "text": "No current_date / current_timestamp / now() in SQL, by any spelling."}
+      ],
+      "here": "The polars leg runs a pinned Polars main build until a release carries the fixes."
+    },
+    {
+      "name": "dbt-polars",
+      "repo": "https://github.com/datamindedbe/incubator-dbt-polars",
+      "engines": ["polars"],
+      "items": [
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/32", "id": "#32", "status": "open", "kind": "bug", "silent": true,
+         "text": "merge_clauses is ignored: do_nothing on match still updates the row."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/34", "id": "#34", "status": "open", "kind": "bug", "silent": true,
+         "text": "Unknown read_options keys are silently dropped: a misspelled option just vanishes."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/36", "id": "#36", "status": "open", "kind": "bug", "silent": true,
+         "text": "on-run-end hooks report OK without running."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/29", "id": "#29", "status": "open", "kind": "bug",
+         "text": "A file source path always ends in lower-case .csv, so a .CSV file cannot be a source.",
+         "extra": {"url": "https://github.com/datamindedbe/incubator-dbt-polars/pull/30", "id": "PR #30"}}
+      ],
+      "here": "dbt-polars as released, no fork: append instead of merge, and every file read with Polars SQL read_csv() instead of a source."
+    },
+    {
+      "name": "duckdb-iceberg",
+      "repo": "https://github.com/duckdb/duckdb-iceberg",
+      "engines": ["iceberg"],
+      "items": [
+        {"url": "https://github.com/duckdb/duckdb-iceberg/pull/1331", "id": "PR #1331", "status": "fixed", "kind": "bug",
+         "text": "The endpoint suffix of a vended Azure SAS was dropped, so a credential vended by the OneLake catalog could not be used."},
+        {"url": "https://github.com/duckdb/duckdb-iceberg/issues/1349", "id": "#1349", "status": "fixed", "kind": "bug",
+         "text": "iceberg_rewrite_data_files does not load the catalog's credentials."}
+      ],
+      "here": "iceberg pins one DuckDB dev build, and compact_iceberg.py primes each rewrite with an iceberg_metadata() scan."
+    },
+    {
+      "name": "mssql-ducklake",
+      "repo": "https://github.com/hugr-lab/mssql-ducklake",
+      "engines": ["ducklake"],
+      "items": [
+        {"url": "https://github.com/hugr-lab/mssql-ducklake/issues/30", "id": "#30", "status": "fixed", "kind": "bug",
+         "text": "The ducklake_schema_versions primary key omitted table_id, so any commit touching two or more tables failed."}
+      ],
+      "here": "Fixed in 0.1.1, which rebuilds the key in place on attach. ducklake runs multi-threaded since."
+    },
+    {
+      "name": "duckrun",
+      "repo": "https://github.com/djouallah/duckrun",
+      "engines": ["duckrun", "polars"],
+      "items": [
+        {"url": "https://github.com/djouallah/duckrun/issues/83", "id": "#83", "status": "open", "kind": "bug", "silent": true,
+         "text": "duckrun pins deltalake==1.5.0 and Polars excludes 1.5.*, so pip silently falls back to duckrun 0.3.3, which has no duckrun module."}
+      ],
+      "here": "duckrun is only the duckrun target's adapter; nothing on the polars leg installs it."
+    }
+  ],
+  "unfiled": [
+    {"name": "OneLake Iceberg catalog", "engines": ["iceberg", "polars"],
+     "text": "Rejects a commit with data files and delete files together (BadRequest 400, \"Only one instance of each update type is allowed per request\"), vends nothing on createTable, and returns 422 on namespace creation.",
+     "source": "AGENTS.md"},
+    {"name": "dbt-duckdb", "engines": ["iceberg", "ducklake"], "silent": true,
+     "text": "A boolean false attach option is silently dropped: stage_create_tables: false vanishes. Use 0 / 1.",
+     "source": "AGENTS.md"},
+    {"name": "dbt OSS 2 (dbt-core 2.0 rc)", "engines": ["iceberg"],
+     "text": "Its Iceberg REST client sends a GetTableInformation request the OneLake catalog rejects (BadRequest 400, \"Malformed request\"). It never built one model, which is why iceberg is on dbt 1.x.",
+     "source": "AGENTS.md"}
+  ],
+  "tried": [
+    {"name": "Sail", "repo": "https://github.com/lakehq/sail",
+     "text": "The engine passes; the packaging does not: dbt-sail depends on dbt-spark[session], which pulls full PySpark and its jars. It also cannot name the source file: input_file_name() is unsupported.",
+     "issue": {"url": "https://github.com/lakehq/sail/issues/1210", "id": "#1210", "status": "open"},
+     "details": "docs/candidate-engines.md"}
+  ]
+}

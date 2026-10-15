@@ -27,8 +27,11 @@ record: the Fabric items each leg touched, what it wrote, and what it cost in ca
   in-Fabric demo after the build (next section).
 - `capacity.yml` — fires after every pipeline run and once a day: reads capacity units per
   run and engine from the Fabric Capacity Metrics model and commits `history/cu.json`.
-- `docs.yml` — fires after every pipeline run: `dbt docs generate --static` and deploys the
-  one self-contained page to GitHub Pages — **[the DAG and the catalog](https://djouallah.github.io/fabric-dbt-examples/)**.
+- `docs.yml` — fires after every pipeline run and publishes GitHub Pages: **[the dashboard](https://djouallah.github.io/fabric-dbt-examples/)**
+  at the root (parity, run times, what each engine supports, how the SQL differs, the upstream
+  bugs; `dashboard/`, its run data generated from `history/runs/` by
+  `.github/scripts/dashboard_data.py`) and `dbt docs generate --static` at
+  **[/dbt/](https://djouallah.github.io/fabric-dbt-examples/dbt/)** — the DAG and the catalog.
   It builds nothing and spends no Fabric compute. **duckrun of the five**, because the DAG is
   the same on all of them and the *catalog* is not: duckrun reports `num_rows`, `bytes` and
   `last_modified` out of the Delta log, and a catalog read is Delta footers over OneLake, not

@@ -30,7 +30,9 @@ None is supported by Microsoft; they are here to show that the business logic is
 
 ## Docs
 
-[The thesis](docs/thesis.md), how to [run it](docs/run.md), and the rest in [docs/](docs/README.md).
+**[The dashboard](https://djouallah.github.io/fabric-dbt-examples/)**: parity across the five
+engines, run times, what each engine and adapter supports, how the SQL differs, and the bugs
+filed upstream. [The thesis](docs/thesis.md), how to [run it](docs/run.md), and the rest in [docs/](docs/README.md).
 
 ## License
 
