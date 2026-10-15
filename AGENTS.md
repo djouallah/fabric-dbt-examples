@@ -393,9 +393,8 @@ probe stays as the place to try an adapter question cheaply.
 
 - **dbt-polars as released (PyPI, pinned), no fork.** Upstream reviews slowly, so the project
   takes nothing that waits on an adapter patch: work around the adapter in the models, or not
-  at all. That is why there are no sources (next point) and why run_dbt.py takes the parity
-  fingerprint with `dbt show`: run-operation never populates dbt-polars' relation cache, so a
-  `ref()` in it fails; `show` is a graph task and does.
+  at all. That is why there are no sources (next point). The parity fingerprint is a
+  run-operation like every engine's: 0.4.0 resolves a `ref()` there (dbt-polars#39).
 - **Every landed file is read with a Polars SQL table function**, `read_csv()` /
   `read_parquet()` in the model, never a source (a source would need a file catalog and the
   adapter patches above). The credential is `AZURE_STORAGE_TOKEN`, which run_dbt.py copies from

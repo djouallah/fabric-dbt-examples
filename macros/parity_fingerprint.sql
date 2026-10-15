@@ -20,9 +20,6 @@
         money columns get a relative tolerance, not equality.
 --#}
 
-{#-- The fingerprint's SELECT on its own. run_dbt.py runs it through `dbt show` on polars:
-     dbt-polars resolves a ref() only in a graph task, which fills its relation cache, and
-     run-operation is not one ("Could not find config for relation"). --#}
 {% macro parity_fingerprint_sql(model='fct_summary') %}
   {%- set rel = ref(model) -%}
   {#-- `dbl` is per-dialect for the same reason the date casts are: Spark SQL has no

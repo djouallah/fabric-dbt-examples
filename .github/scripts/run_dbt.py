@@ -96,7 +96,6 @@ BASE = ["--target", engine, "--profiles-dir", "."]
 
 # The text of the last failure, for RESUMING below.
 LAST_ERROR = ""
-LAST_RESULT = None
 
 
 def run(*args, callbacks=None) -> bool:
@@ -106,9 +105,7 @@ def run(*args, callbacks=None) -> bool:
 
     print(f"=== dbt {' '.join(args)} ({engine}) ===", flush=True)
     t0 = time.time()
-    global LAST_RESULT
     res = dbtRunner(callbacks=callbacks or []).invoke([*args, *BASE])
-    LAST_RESULT = res
     print(f"=== dbt {args[0]}: success={res.success} in {int(time.time() - t0)}s ===", flush=True)
     LAST_ERROR = "" if res.success else str(res.exception or "")
     if res.exception:
@@ -183,22 +180,7 @@ def keep_log(event) -> None:
         logged.append(event.info.msg)
 
 
-if engine == "polars":
-    # dbt-polars resolves a ref() only in a graph task, which fills its relation cache, and
-    # run-operation is not one. `dbt show` is, and runs the macro's own SELECT; the JSON is
-    # the one parity_fingerprint() logs on every other engine.
-    if not run("show", "--inline", "{{ parity_fingerprint_sql() }}", "--limit", "-1"):
-        sys.exit(1)
-    import json  # noqa: E402
-
-    r = LAST_RESULT.result.results[0].agate_table.rows[0]
-    logged.append(json.dumps({
-        "engine": engine, "adapter": "polars", "model": "fct_summary",
-        "rows_total": int(r[0]), "duids": int(r[1]), "days": int(r[2]),
-        "date_min": str(r[3]), "date_max": str(r[4]),
-        "mw_sum": float(r[5]), "price_sum": float(r[6]),
-    }, indent=2))
-elif not run("run-operation", "parity_fingerprint", callbacks=[keep_log]):
+if not run("run-operation", "parity_fingerprint", callbacks=[keep_log]):
     sys.exit(1)
 if fingerprint_out:
     import json  # noqa: E402
