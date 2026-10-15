@@ -1,4 +1,4 @@
-# fabric-medallion-dbt-community
+# fabric-dbt-examples
 
 > **Community edition.** The same gold layer on five community engines, run from GitHub
 > Actions or deployed to Fabric. The Microsoft-supported version — Fabric Warehouse

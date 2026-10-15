@@ -88,7 +88,7 @@ and writes Iceberg with pyiceberg. `.github/workflows/polars_smoke.yml` runs it 
 `workflow_dispatch` only, gates nothing, **SQL models only**. A Python model would test a
 rewrite of the gold layer, not the engine. Every write is checked by reading the table back.
 
-Run [38045478706](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38045478706)
+Run [38045478706](https://github.com/djouallah/fabric-dbt-examples/actions/runs/38045478706)
 (dbt-polars 0.3.1, polars 2.0.0, pyiceberg 0.11.1), OneLake Iceberg REST catalog:
 
 | | result |
@@ -107,7 +107,7 @@ Run [38045478706](https://github.com/djouallah/fabric-medallion-dbt-community/ac
 | window function, `DOUBLE → DECIMAL`, `split_part(…, -1)` | works. `0.125` → `DECIMAL(18,2)` gives `0.12`, like DuckDB |
 | `{{ dbt.hash() }}` | **error**: Polars SQL has no hash function; the adapter says to use a Python model |
 
-Run [38051227050](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38051227050)
+Run [38051227050](https://github.com/djouallah/fabric-dbt-examples/actions/runs/38051227050)
 (same versions) probed the gaps that run left open:
 
 | | result |
@@ -120,7 +120,7 @@ Run [38051227050](https://github.com/djouallah/fabric-medallion-dbt-community/ac
 | `run_query` over a landed file at parse time | works (550,375): the parse-time context reaches OneLake |
 | `CAST(… AS TIMESTAMP WITH TIME ZONE)`, `… AT TIME ZONE 'UTC'` | **error**, both: no tz-aware timestamp in Polars SQL by any spelling |
 
-Run [38121051083](https://github.com/djouallah/fabric-medallion-dbt-community/actions/runs/38121051083)
+Run [38121051083](https://github.com/djouallah/fabric-dbt-examples/actions/runs/38121051083)
 installs dbt-polars **from the fork** at the head of
 [dbt-polars#30](https://github.com/datamindedbe/incubator-dbt-polars/pull/30), the fix for #29
 (`requirements/polars_smoke.txt` pins the commit until a release carries it):
