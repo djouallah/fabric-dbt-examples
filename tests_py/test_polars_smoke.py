@@ -141,7 +141,15 @@ def test_only_the_source_probe_gets_the_file_catalog(smoke):
     assert types(False) == ["iceberg"]
     assert types(True) == ["iceberg", "azure"]
     with_yml = [p for p in _probes(smoke) if any(m.endswith(".yml") for m in (p[3] or {}))]
-    assert [m for p in with_yml for m in p[3]] == ["sources.yml", "f_source_glob"]
+    assert [m for p in with_yml for m in p[3]] == [
+        "sources.yml", "f_source_glob", "sources_exact.yml", "f_source_exact"]
+
+
+def test_the_exact_probe_filters_the_raw_column(smoke):
+    """A function of the path (split_part) cannot prune files; only the column itself can."""
+    sql = _model(smoke, "f_source_exact")
+    assert "filename in (" in sql and "split_part" not in sql
+    assert "A.CSV" in sql and "B.CSV" in sql
 
 
 def test_the_source_reads_with_scan_csv_options(smoke):

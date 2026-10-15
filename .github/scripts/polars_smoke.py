@@ -276,6 +276,36 @@ DUNIT0_CAST = ("cast(column_0 as varchar) = 'D' and cast(column_1 as varchar) = 
                "and cast(column_3 as varchar) = '3'")
 
 
+def source_uri():
+    """The glob the `landing` catalog hands scan_csv: az://<container>/<prefix>/<location>
+    (dbt_polars_catalog_azure.AzureBlobStorageCatalog.get_uri)."""
+    return f"az://{WORKSPACE}/{LANDING_ITEM}/{CSV_DIR}/*.CSV"
+
+
+def source_path_guesses(files):
+    """Both spellings a file can have in the source's `filename` column, for when
+    source_paths() could not read one: a wrong guess only fails the probe, it cannot widen it."""
+    out = []
+    for f in files:
+        base = f["path"].rsplit("/", 1)[1]
+        out += [f"az://{WORKSPACE}/{LANDING_ITEM}/{CSV_DIR}/{base}", f["abfss"]]
+    return out
+
+
+def source_paths(files):
+    """The `filename` values the source reports for these files. One row of the glob is read
+    the way the adapter reads it, and its directory is put in front of each base name."""
+    import polars as pl
+    opts = {"account_name": "onelake", "timeout": "120s", "bearer_token": TOKEN,
+            "use_fabric_endpoint": "true"}
+    sample = (pl.scan_csv(source_uri(), has_header=False, n_rows=1, infer_schema=False,
+                          truncate_ragged_lines=True, include_file_paths="filename",
+                          storage_options=opts)
+              .select("filename").collect().item())
+    folder = sample.rsplit("/", 1)[0]
+    return [f"{folder}/{f['path'].rsplit('/', 1)[1]}" for f in files]
+
+
 def glob_abfss():
     return f"abfss://{WORKSPACE}@{ONELAKE_DFS}/{LANDING_ITEM}/{CSV_DIR}/*.CSV"
 
@@ -442,6 +472,20 @@ def probes(ctx):
                                   "split_part(filename, '/', -1) in (" + names + ") and " + DUNIT}
                 if files and len(speed) >= 2 else None,
                 [None], lambda c: expect_dunit_wide(c, "f_source_glob", c["speed_files"])))
+    # THE SAME SOURCE, filtered on the RAW filename column. The split_part() above is a function
+    # of the path, which Polars cannot use to skip a file: run 38733171553 took 103 s against
+    # the UNION ALL's 36 s, i.e. it opened far more than 10 files. An IN over the column itself
+    # is the form a scan can prune on. The literals must match the column character for
+    # character, so they come from source_paths(), which reads one value the way dbt-polars does.
+    exact = ", ".join(f"'{p}'" for p in ctx.get("source_paths") or source_path_guesses(speed))
+    out.append((len(out) + 1, f"read speed, {len(speed)} files: dbt source, exact-path filter",
+                "the same source, `filename IN (<full paths>)`: can the scan skip the other files",
+                {"sources_exact.yml": json.dumps(SOURCES_YML),
+                 "f_source_exact": "{{ config(materialized='table') }}\nselect filename, "
+                                   "column_53 as c52 from {{ source('landed', 'daily') }} where "
+                                   "filename in (" + exact + ") and " + DUNIT}
+                if files and len(speed) >= 2 else None,
+                [None], lambda c: expect_dunit_wide(c, "f_source_exact", c["speed_files"])))
     for key, opts in READ_CSV_SPEED.items():
         reads = " union all ".join(
             "select filename, column_52 as c52 from read_csv('" + f["abfss"] + "', " + opts
@@ -634,7 +678,7 @@ def dbt(root, command, vars_):
     return True, ""
 
 
-def newest_daily_files(n=2):
+def newest_daily_files(n=2, stats=None):
     """The n newest landed PUBLIC_DAILY files, from the OneLake DFS listing. [] on any failure,
     which makes the per-file probes SKIP: an empty landing zone is not a finding about Polars."""
     if not LANDING_ITEM:
@@ -654,6 +698,8 @@ def newest_daily_files(n=2):
         return []
     names = sorted((p["name"] for p in paths if not p.get("isDirectory")
                     and p["name"].lower().endswith(".csv")), reverse=True)
+    if stats is not None:
+        stats["listed"] = len(names)
     if not names:
         say(f"    (no CSVs under {CSV_DIR} -- has anything landed?)")
     return [{"path": name, "stem": name.rsplit("/", 1)[1].rsplit(".", 1)[0],
@@ -691,7 +737,8 @@ def banner():
 
 def main():
     banner()
-    speed_files = newest_daily_files(SPEED_FILES)
+    listing = {}
+    speed_files = newest_daily_files(SPEED_FILES, listing)
     daily_files = speed_files[:2]
     ctx = {"catalog": iceberg_catalog(), "daily_files": daily_files, "speed_files": speed_files,
            "daily_file": daily_files[0] if daily_files else None}
@@ -713,6 +760,15 @@ def main():
     except Exception as e:  # noqa: BLE001 - dbt-polars creates it too; its own error is the finding
         say(f"    (namespace pre-create: {oneline(e, 200)})")
     drop_probe_tables(ctx["catalog"])
+    if listing:
+        # The source probes' glob covers every one of these; the filters keep SPEED_FILES.
+        say(f"{'csv files in the folder':26} {listing['listed']} (listing capped at 5000)")
+    if LANDING_ITEM and len(speed_files) >= 2:
+        try:
+            ctx["source_paths"] = source_paths(speed_files)
+            say(f"{'source filename form':26} {scrub(ctx['source_paths'][0])}")
+        except Exception as e:  # noqa: BLE001 - the probe falls back to both spellings
+            say(f"    (source filename form unread, guessing both: {oneline(e, 300)})")
     daily = ctx["daily_file"]
     say(f"{'daily file':26} {daily['path'] if daily else '(none)'}")
 
