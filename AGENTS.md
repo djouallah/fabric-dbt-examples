@@ -401,16 +401,13 @@ probe stays as the place to try an adapter question cheaply.
   `ONELAKE_TOKEN`: table functions take none. The ragged AEMO CSVs are read by ONE
   `read_csv()` over the folder's glob with a FIXED schema — the record's spec columns, all
   VARCHAR, bound BY POSITION — plus `missing_columns => 'insert'` and `truncate_ragged_lines`
-  (`missing_columns` is in SQL since pola-rs/polars#29975). SQL `read_csv()` takes no list of
-  paths (pola-rs/polars#29969), so the run's files are spelled as a regex alternation in the
-  glob, `<folder>/*(a.CSV|b.CSV|...)`: Polars' cloud glob passes everything but `*` and `.`
-  through to a regex (`extract_prefix_expansion`, crates/polars-io/src/cloud/glob.rs), so only
-  those files are read. A plain `*.CSV` glob plus a filename filter reads the WHOLE folder —
-  Polars skips no file on the filter — and run 38907253166 sat on it until cancelled. The
-  filter on `filename` stays as the guard, since the alternation is undocumented. **No UNION
-  ALL of one `read_csv()` per file: that was an earlier read and it does not come back.** Never
-  `infer_schema => false` (the first line's width: a DUNIT row came back 25 wide) and never
-  inference over the glob (it outran 20 minutes).
+  (`missing_columns` is in SQL since pola-rs/polars#29975), ONE `read_csv()` PER FILE joined
+  by UNION ALL: 5 s for 10 files in smoke run 38904749014, against 42 s for the widest-row
+  inference it replaced. SQL `read_csv()` takes no list of paths (pola-rs/polars#29969), and a
+  glob over the folder reads EVERY file — Polars skips no file on a filename filter — so run
+  38907253166 sat on the whole landing folder until cancelled. When #29969 lands, the union
+  becomes one `read_csv()` of the list. Never `infer_schema => false` (the first line's width:
+  a DUNIT row came back 25 wide) and never inference over a glob (it outran 20 minutes).
 - **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
   the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
   same `process_limit` — and each file it lists becomes one `read_csv()` in the model.

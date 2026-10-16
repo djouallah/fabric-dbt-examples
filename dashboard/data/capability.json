@@ -43,7 +43,7 @@
         "iceberg": {"o": "native", "n": "Same read_csv as duckrun.", "path": "macros/duckdb_read_csv.sql"},
         "ducklake": {"o": "native", "n": "Same read_csv as duckrun.", "path": "macros/duckdb_read_csv.sql"},
         "spark": {"o": "native", "n": "Just reads it: USING csv with an explicit STRING schema and mode PERMISSIVE pads short rows and drops extra fields, no questions asked.", "path": "dbt1/macros/spark_read_csv.sql"},
-        "polars": {"o": "workaround", "n": "One Polars SQL read_csv() over the folder glob with a fixed VARCHAR schema, missing_columns => 'insert' and truncate_ragged_lines (missing_columns is in SQL only on Polars main, pola-rs/polars#29975). infer_schema => false reads only the first line's width (25 of 53 fields).", "path": "macros/polars_read_csv.sql"}
+        "polars": {"o": "workaround", "n": "Polars SQL read_csv(), ONE FILE PER CALL joined by UNION ALL, with a fixed VARCHAR schema, missing_columns => 'insert' and truncate_ragged_lines (missing_columns is in SQL only on Polars main, pola-rs/polars#29975). A folder glob reads every file: no list of paths in SQL (pola-rs/polars#29969).", "path": "macros/polars_read_csv.sql"}
       }
     },
     {
@@ -54,7 +54,7 @@
         "iceberg": {"o": "native", "n": "A pre_hook SET VARIABLE, read back with getvariable().", "path": "dbt1/models/aemo/iceberg/marts/fct_scada.sql"},
         "ducklake": {"o": "native", "n": "A pre_hook SET VARIABLE, read back with getvariable().", "path": "dbt1/models/aemo/ducklake/marts/fct_scada.sql"},
         "spark": {"o": "native", "n": "run_query inside the pre_hook macro, turned into a Hadoop brace glob.", "path": "dbt1/macros/spark_new_files.sql"},
-        "polars": {"o": "workaround", "n": "No SQL hooks, so the list is a parse-time run_query, applied as a filter on the read's filename column. Polars skips no file on it: the glob reads the whole folder (pola-rs/polars#29969 would make it a list).", "path": "macros/polars_read_csv.sql"}
+        "polars": {"o": "workaround", "n": "No SQL hooks, so the list is a parse-time run_query and every file becomes its own read_csv().", "path": "macros/polars_read_csv.sql"}
       }
     },
     {
