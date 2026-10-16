@@ -64,17 +64,20 @@
 {% macro polars_staging(record, folder, files) %}
   {%- set base = get_csv_archive_path() ~ '/' ~ folder ~ '/' -%}
   {%- set paths = [base ~ '*.CSV'] if files is none else (files | map('string') | list) -%}
-  SELECT * FROM (
-    {%- for f in paths %}
-    SELECT * FROM read_csv('{{ f if files is none else base ~ f }}',
-      has_header => false, skip_rows => 1,
-      schema => { {%- for name in aemo_columns(record) %}'{{ name }}': 'VARCHAR'{{ ", " if not loop.last }}{% endfor %} },
-      missing_columns => 'insert', truncate_ragged_lines => true,
-      include_file_paths => 'filename')
-    {%- if not loop.last %}
-    UNION ALL
-    {%- endif %}
-    {%- endfor %}
-  ) AS r
+  {#- The record filter is INSIDE every branch, not once around the union: with it outside, a
+      50-file fct_price took the runner down (pipeline run 38912205437, "The runner has received
+      a shutdown signal"). Each file is ~550k rows of every record type; filtered per branch,
+      no branch carries more than its own record (the shape polars_smoke run 38904749014 read
+      10 files with in 5 s). #}
+  {%- for f in paths %}
+  SELECT * FROM read_csv('{{ f if files is none else base ~ f }}',
+    has_header => false, skip_rows => 1,
+    schema => { {%- for name in aemo_columns(record) %}'{{ name }}': 'VARCHAR'{{ ", " if not loop.last }}{% endfor %} },
+    missing_columns => 'insert', truncate_ragged_lines => true,
+    include_file_paths => 'filename')
   WHERE {{ polars_record_filter(record) }}
+  {%- if not loop.last %}
+  UNION ALL
+  {%- endif %}
+  {%- endfor %}
 {% endmacro %}
