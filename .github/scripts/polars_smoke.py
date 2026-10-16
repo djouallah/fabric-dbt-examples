@@ -224,8 +224,8 @@ READ_CSV_WIDE_SQL = ("has_header => false, skip_rows => 1, infer_schema_length =
 # READ SPEED. The polars leg's fact models read with READ_CSV_WIDE_SQL, one read_csv() per file,
 # and pipeline run 38658194368's fct_price ran 16.5 minutes on 50 files before the runner died.
 # lakehouse_benchmark's polars engine is fast on the same files with scan_csv(list, schema=String,
-# missing_columns="insert"): no inference, one pass. Polars SQL read_csv() takes `schema` but
-# REFUSES `missing_columns` (READ_CSV_EXCLUDED_OPTIONS, pola-rs/polars@769413ba3f). Each variant
+# missing_columns="insert"): no inference, one pass. Polars SQL read_csv() took `schema` but
+# refused `missing_columns` until pola-rs/polars#29975 (#29970), which the pinned build has. Each variant
 # below reads the same SPEED_FILES newest files, one read_csv() per file, UNION ALL, and is graded
 # on time and on width (the DUNIT rows' 53rd field).
 SPEED_FILES = 10
@@ -237,13 +237,18 @@ READ_CSV_SPEED = {
     "f_speed_schema": _HEAD + ", " + _SCHEMA,
     "f_speed_schema_ragged": _HEAD + ", " + _SCHEMA + ", truncate_ragged_lines => true",
     "f_speed_missing_columns": _HEAD + ", " + _SCHEMA + ", missing_columns => 'insert'",
+    "f_speed_missing_ragged": (_HEAD + ", " + _SCHEMA
+                               + ", missing_columns => 'insert', truncate_ragged_lines => true"),
 }
 SPEED_WHY = {
     "f_speed_infer_null": "the leg's read today: widest-row inference, every file read twice",
     "f_speed_infer_false": "no inference: fast, but is the width the first line's?",
     "f_speed_schema": "131 VARCHAR, no missing_columns: does a short first row error or pad?",
     "f_speed_schema_ragged": "the same, plus truncate_ragged_lines",
-    "f_speed_missing_columns": "the benchmark's missing_columns => 'insert': refused in SQL?",
+    "f_speed_missing_columns": "the benchmark's missing_columns => 'insert', in SQL since "
+                               "pola-rs/polars#29975 (#29970): no inference, one pass per file",
+    "f_speed_missing_ragged": "the same plus truncate_ragged_lines, exactly the Python "
+                              "reference's options",
 }
 
 # The landed folder as ONE dbt source in the `landing` catalog (profile_yml(landing=True)).
