@@ -19,7 +19,7 @@
         {"url": "https://github.com/pola-rs/polars/issues/28798", "id": "#28798", "status": "open", "kind": "gap",
          "text": "No current_date / current_timestamp / now() in SQL, by any spelling."},
         {"url": "https://github.com/pola-rs/polars/issues/29969", "id": "#29969", "status": "open", "kind": "gap",
-         "text": "SQL read_csv() takes no list of paths, unlike scan_csv: the polars leg reads one file per read_csv(), joined by UNION ALL."},
+         "text": "SQL read_csv() takes no list of paths, unlike scan_csv: the polars leg reads the whole folder glob and filters on the file name, and Polars skips no file on that filter."},
         {"url": "https://github.com/pola-rs/polars/issues/29970", "id": "#29970", "status": "fixed on main", "kind": "gap",
          "text": "SQL read_csv() rejected missing_columns, so a ragged CSV could not be read with a fixed schema: widest-row inference instead, 37 s for 10 files where scan_csv takes 4.9 s. PR #29975 adds it (with extra_columns and infer_schema_files); not in the leg's pinned build yet."}
       ],

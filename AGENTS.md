@@ -398,12 +398,16 @@ probe stays as the place to try an adapter question cheaply.
 - **Every landed file is read with a Polars SQL table function**, `read_csv()` /
   `read_parquet()` in the model, never a source (a source would need a file catalog and the
   adapter patches above). The credential is `AZURE_STORAGE_TOKEN`, which run_dbt.py copies from
-  `ONELAKE_TOKEN`: table functions take none. The ragged AEMO CSVs are read ONE FILE PER
-  `read_csv()`, joined by UNION ALL, with `has_header => false, infer_schema_length => NULL`
-  (pola-rs/polars#29917): the width is the widest row's. Not `infer_schema => false`, which
-  reads only the first line's width (a DUNIT row came back 25 wide), and not over the folder's
-  glob, whose whole-file inference outran 20 minutes. Columns are numbered from `column_0`;
-  `macros/polars_read_csv.sql` binds the spec BY POSITION and casts each back to String.
+  `ONELAKE_TOKEN`: table functions take none. The ragged AEMO CSVs are read by ONE
+  `read_csv()` over the folder's glob with a FIXED schema — the record's spec columns, all
+  VARCHAR, bound BY POSITION — plus `missing_columns => 'insert'` and `truncate_ragged_lines`
+  (`missing_columns` is in SQL since pola-rs/polars#29975), narrowed to the run's files by a
+  filter on `filename`. **No UNION ALL of one `read_csv()` per file: that was the previous
+  read and it does not come back**, even though it is faster. The glob reads every file in the
+  folder and the filter drops the rest — Polars skips no file on it (smoke runs 38733171553,
+  38735481756) — and that cost is accepted until SQL `read_csv()` takes a list of paths
+  (pola-rs/polars#29969). Never `infer_schema => false` (the first line's width: a DUNIT row came
+  back 25 wide) and never inference over the glob (it outran 20 minutes).
 - **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
   the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
   same `process_limit` — and each file it lists becomes one `read_csv()` in the model.

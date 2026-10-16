@@ -4,14 +4,14 @@
     {
       "id": "read-csv",
       "title": "Read a ragged CSV",
-      "why": "An AEMO PUBLIC_DAILY file holds several record types of different widths, plus comment rows. Spark reads it as asked; DuckDB needs four options; Polars needs one read per file.",
+      "why": "An AEMO PUBLIC_DAILY file holds several record types of different widths, plus comment rows. Spark reads it as asked; DuckDB and Polars need the columns spelled out and short rows padded.",
       "panels": [
         {"engines": ["duckrun", "iceberg", "ducklake"], "path": "macros/duckdb_read_csv.sql",
          "code": "read_csv(\n  getvariable('scada_daily_paths'),\n  skip = 1, header = 0,\n  all_varchar = 1,\n  columns = { 'I': 'VARCHAR', ... },\n  filename = 1,\n  null_padding = true,\n  ignore_errors = 1,\n  auto_detect = false\n)"},
         {"engines": ["spark"], "path": "dbt1/macros/spark_read_csv.sql",
          "code": "CREATE OR REPLACE TEMPORARY VIEW raw_scada\n  (`I` STRING, `UNIT` STRING, ...)\nUSING csv OPTIONS (\n  path '<folder>/{f1.CSV,f2.CSV}',\n  header 'true',\n  mode 'PERMISSIVE'\n)"},
         {"engines": ["polars"], "path": "macros/polars_read_csv.sql",
-         "code": "SELECT CAST(column_0 AS VARCHAR) AS I, ...\nFROM read_csv('<folder>/f1.CSV',\n  has_header => false, skip_rows => 1,\n  infer_schema_length => NULL,\n  try_parse_dates => false,\n  include_file_paths => 'filename')\nUNION ALL\nSELECT ... FROM read_csv('<folder>/f2.CSV', ...)"}
+         "code": "SELECT * FROM read_csv('<folder>/*.CSV',\n  has_header => false, skip_rows => 1,\n  schema => {'I': 'VARCHAR', 'UNIT': 'VARCHAR', ...},\n  missing_columns => 'insert',\n  truncate_ragged_lines => true,\n  include_file_paths => 'filename')"}
       ]
     },
     {
@@ -85,7 +85,7 @@
         {"engines": ["spark"], "path": "dbt1/macros/spark_new_files.sql",
          "code": "{% for ap in run_query(q).columns[0].values() %}\n  {% do names.append(ap.split('/')[-1]) %}\n{% endfor %}\n-- at run time, inside the pre_hook macro,\n-- rendered into path '<folder>/{a.CSV,b.CSV}'"},
         {"engines": ["polars"], "path": "macros/polars_read_csv.sql",
-         "code": "{% if execute and flags.WHICH in ('run','build','retry') %}\n  {% for row in run_query(q).rows %} ... {% endfor %}\n{% endif %}\n-- at PARSE time: dbt-polars has no SQL hooks,\n-- so each file becomes its own read_csv()"}
+         "code": "{% if execute and flags.WHICH in ('run','build','retry') %}\n  {% for row in run_query(q).rows %} ... {% endfor %}\n{% endif %}\n-- at PARSE time: dbt-polars has no SQL hooks;\n-- the list filters the glob read:\nWHERE split_part(filename, '/', -1) IN ('a.CSV', 'b.CSV')"}
       ]
     },
     {
