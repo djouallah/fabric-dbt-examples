@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-10-15",
+  "as_of": "2026-10-16",
   "projects": [
     {
       "name": "Polars",
@@ -20,8 +20,8 @@
          "text": "No current_date / current_timestamp / now() in SQL, by any spelling."},
         {"url": "https://github.com/pola-rs/polars/issues/29969", "id": "#29969", "status": "open", "kind": "gap",
          "text": "SQL read_csv() takes no list of paths, unlike scan_csv: the polars leg reads one file per read_csv(), joined by UNION ALL."},
-        {"url": "https://github.com/pola-rs/polars/issues/29970", "id": "#29970", "status": "open", "kind": "gap",
-         "text": "SQL read_csv() rejects missing_columns, so a ragged CSV cannot be read with a fixed schema: widest-row inference instead, 37 s for 10 files where scan_csv takes 4.9 s."}
+        {"url": "https://github.com/pola-rs/polars/issues/29970", "id": "#29970", "status": "fixed on main", "kind": "gap",
+         "text": "SQL read_csv() rejected missing_columns, so a ragged CSV could not be read with a fixed schema: widest-row inference instead, 37 s for 10 files where scan_csv takes 4.9 s. PR #29975 adds it (with extra_columns and infer_schema_files); not in the leg's pinned build yet."}
       ],
       "here": "The polars leg runs a pinned Polars main build until a release carries the fixes."
     },
@@ -36,6 +36,8 @@
          "text": "Unknown read_options keys are silently dropped: a misspelled option just vanishes."},
         {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/36", "id": "#36", "status": "fixed in 0.4.0", "kind": "bug", "silent": true,
          "text": "on-run-end hooks reported OK without running. A hook with SQL now fails with an error."},
+        {"url": "https://github.com/datamindedbe/incubator-dbt-polars/pull/39", "id": "PR #39", "status": "fixed in 0.4.0", "kind": "bug",
+         "text": "run-operation never filled the relation cache, so a ref() in a macro failed. The parity fingerprint is a run-operation again."},
         {"url": "https://github.com/datamindedbe/incubator-dbt-polars/issues/29", "id": "#29", "status": "fixed in 0.4.0", "kind": "bug",
          "text": "A file source path always ended in lower-case .csv, so a .CSV file could not be a source. 0.4.0 reads a source from external.location, any extension or a glob.",
          "extra": {"url": "https://github.com/datamindedbe/incubator-dbt-polars/pull/30", "id": "PR #30"}}

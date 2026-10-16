@@ -98,7 +98,7 @@
         "iceberg": {"o": "native", "n": "dbt run-operation parity_fingerprint.", "path": "macros/parity_fingerprint.sql"},
         "ducklake": {"o": "native", "n": "dbt run-operation parity_fingerprint.", "path": "macros/parity_fingerprint.sql"},
         "spark": {"o": "workaround", "n": "In-process through a dbtRunner callback: a separate run-operation would start a JVM without the session spark_session.py built.", "path": ".github/scripts/run_dbt.py"},
-        "polars": {"o": "workaround", "n": "run-operation never fills dbt-polars' relation cache, so a ref() in it fails; the fingerprint is taken with dbt show.", "path": ".github/scripts/run_dbt.py"}
+        "polars": {"o": "native", "n": "dbt run-operation parity_fingerprint, since 0.4.0 (dbt-polars#39). Before, run-operation never filled the relation cache and the fingerprint went through dbt show.", "path": "macros/parity_fingerprint.sql"}
       }
     },
     {
