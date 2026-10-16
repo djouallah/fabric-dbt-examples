@@ -2,7 +2,7 @@
      landed AEMO CSVs. Same spec (aemo_columns.sql), same record rule, same file choice --
      only the mechanics differ:
 
-       * THE READ is ONE Polars SQL read_csv() over the folder's glob, with no header and a
+       * THE READ is ONE Polars SQL read_csv() over a glob of the run's files, with no header and a
          FIXED schema: the record's own columns, every one VARCHAR and named from the spec,
          with `missing_columns => 'insert'` padding a shorter row and `truncate_ragged_lines`
          cutting a wider one (another record type, which the WHERE drops anyway) -- the DuckDB
@@ -13,15 +13,20 @@
          read_csv() takes none.
        * THE FILE CHOICE happens at parse time with run_query, where the DuckDB legs use a
          `SET VARIABLE` pre_hook: dbt-polars refuses SQL hooks ("there is no database to run
-         them on"). The query is the same one, newest first, and the files it lists become a
-         filter on the read's `filename` column.
+         them on"). The query is the same one, newest first, and the files it lists become the
+         glob itself, `<folder>/*(<file>|<file>|...)`, plus a filter on `filename`.
 
-     KNOWN COST, ACCEPTED: the glob reads EVERY file in the folder and the filename filter
-     drops the rest afterwards -- Polars does not skip a file on it (polars_smoke runs
-     38733171553, 38735481756: 110-187 s for 10 files out of 1,000, against 5 s for one
-     read_csv() per file joined by UNION ALL). The UNION ALL is not coming back. The fix is a
-     list of paths in SQL read_csv() (pola-rs/polars#29969): then the glob becomes that list
-     and nothing else changes. --#}
+     WHY THAT GLOB WORKS. SQL read_csv() takes no list of paths (pola-rs/polars#29969), and a
+     plain `*.CSV` glob reads EVERY file in the folder: Polars skips no file on a filename
+     filter (polars_smoke runs 38733171553, 38735481756), and pipeline run 38907253166 sat on the
+     whole landing folder until it was cancelled. But a CLOUD glob is a regex in disguise:
+     crates/polars-io/src/cloud/glob.rs (extract_prefix_expansion) rewrites only `*` and `.` and
+     passes every other character through, so `*(a.CSV|b.CSV)` matches exactly those names -- the
+     list, spelled as an alternation (Spark's `{a,b}` would not work). The folder is listed once
+     and only the matches are read. That is undocumented, so the `filename` filter stays as the
+     guard: if the glob ever matched more, the result would still be exact, only slower. The
+     UNION ALL of one read_csv() per file is not coming back. When #29969 lands, the alternation
+     becomes a list and nothing else changes. --#}
 
 
 {#-- The record-selection predicate from aemo_spec's `equals`/`nonzero`, as in
@@ -58,13 +63,14 @@
 {% endmacro %}
 
 
-{#-- The staging read for one record: one read_csv() over the folder's glob, the spec's columns
-     bound BY POSITION (aemo_columns.sql: "Column ORDER is load-bearing"), narrowed to `files`
-     and to the record. `files` is none outside run/build/retry, where nothing executes: the
-     model then compiles with no file filter. --#}
+{#-- The staging read for one record: one read_csv() over a glob that names the run's `files`,
+     the spec's columns bound BY POSITION (aemo_columns.sql: "Column ORDER is load-bearing"),
+     narrowed to the record. `files` is none outside run/build/retry, where nothing executes: the
+     model then compiles over `*.CSV` with no file filter. --#}
 {% macro polars_staging(record, folder, files) %}
   {%- set base = get_csv_archive_path() ~ '/' ~ folder ~ '/' -%}
-  SELECT * FROM read_csv('{{ base }}*.CSV',
+  {%- set glob = base ~ ('*.CSV' if files is none else '*(' ~ (files | join('|')) ~ ')') -%}
+  SELECT * FROM read_csv('{{ glob }}',
     has_header => false, skip_rows => 1,
     schema => { {%- for name in aemo_columns(record) %}'{{ name }}': 'VARCHAR'{{ ", " if not loop.last }}{% endfor %} },
     missing_columns => 'insert', truncate_ragged_lines => true,
