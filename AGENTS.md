@@ -197,8 +197,10 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   hand. `append_new_columns` was tried here on 2026-09-18 and reverted with the rest.
 - **duckdb versions per leg (2026-09-18):** ducklake is PINNED to 1.5.5 (its community
   extensions, `mssql_ducklake` and `delta_export`, publish for that line); iceberg is PINNED by
-  hand to one dev build, `2.0.0.dev2609121639`, the way the source repo pins; duckrun alone
-  tracks the latest PRE-RELEASE (`--pre duckdb`). Never pin `deltalake` for duckrun: the adapter
+  hand to one dev build, `2.0.0.dev2609121639`, the way the source repo pins; duckrun runs STABLE
+  duckdb since 2026-10-17 — it tracked `--pre duckdb` until the dev build 2.0.0.dev2610151406
+  removed `DuckDBPyRelation.fetchone()`, which duckrun 0.5.1 calls, and every duckrun model
+  failed (run 38912205437). Never pin `deltalake` for duckrun: the adapter
   pins it itself. The dev line is required for iceberg, not preferred —
   `iceberg_rewrite_data_files()` exists nowhere else — but **`--pre` is a GLOBAL flag in a
   requirements file**, and floating it there had pip considering a `dbt-core 2.0.0rc7` sdist for

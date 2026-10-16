@@ -1,8 +1,10 @@
 # duckrun: DuckDB compute, Delta Lake output via delta-rs.
 #
-# LATEST PRE-RELEASE duckdb, like the iceberg leg, so the two DuckDB-on-OneLake legs run the
-# same engine build (2026-09-17). duckrun's own duckdb constraint still applies; `--pre` only
-# lets pip consider dev builds inside it. deltalake stays unpinned: duckrun pins it.
+# STABLE duckdb (2026-10-17). This leg tracked the latest PRE-RELEASE until the dev build
+# 2.0.0.dev2610151406 removed DuckDBPyRelation.fetchone(), which duckrun 0.5.1 calls: every
+# model failed with "Relations no longer have fetchone()" (pipeline run 38912205437), and
+# `--pre` had also pulled in dbt-core 1.13.0b1. No `--pre` until duckrun is fixed for the 2.0
+# line. duckrun's own duckdb constraint still applies. deltalake stays unpinned: duckrun pins it.
 #
 # `[dbt]` IS REQUIRED, AND THIS IS THE ONLY REQUIREMENTS FILE HERE THAT NEEDS IT. duckrun 0.5.0
 # moved dbt-core and dbt-duckdb behind that extra -- plain `pip install duckrun` is the
@@ -11,10 +13,8 @@
 # so a bare `duckrun` leaves the leg with no adapter at all. duckrun is ONLY this adapter: no
 # other requirements file installs it, and the scripts' Fabric needs are requirements/tools.txt.
 #
-# The extra also carries `dbt-core<2.0` and `dbt-duckdb<2.0`, which is what keeps the GLOBAL
-# `--pre` above from letting pip consider a dbt-core 2 pre-release for this dbt 1.x leg. That is
-# the exact failure iceberg.txt records from 2026-09-18, and on THIS file `--pre` is still live,
-# so the ceiling is load-bearing rather than incidental.
---pre
+# The extra also carries `dbt-core<2.0` and `dbt-duckdb<2.0`, which is what kept a GLOBAL `--pre`
+# from letting pip consider a dbt-core 2 pre-release for this dbt 1.x leg (the failure
+# iceberg.txt records from 2026-09-18). Restore `--pre` only with that ceiling in mind.
 duckdb
 duckrun[dbt]
