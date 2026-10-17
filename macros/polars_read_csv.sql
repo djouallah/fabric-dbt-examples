@@ -64,11 +64,15 @@
 {% macro polars_staging(record, folder, files) %}
   {%- set base = get_csv_archive_path() ~ '/' ~ folder ~ '/' -%}
   {%- set paths = [base ~ '*.CSV'] if files is none else (files | map('string') | list) -%}
-  {#- The record filter is INSIDE every branch, not once around the union: with it outside, a
-      50-file fct_price took the runner down (pipeline run 38912205437, "The runner has received
-      a shutdown signal"). Each file is ~550k rows of every record type; filtered per branch,
-      no branch carries more than its own record (the shape polars_smoke run 38904749014 read
-      10 files with in 5 s). #}
+  {#- THIS UNION DOES NOT FIT 50 FILES ON THE 7 GB RUNNER, and nothing in this macro can make
+      it. Polars plans SQL UNION ALL as an UNORDERED union, and its streaming engine runs every
+      input of one at once: peak RSS grows ~0.34 GB per file while pl.concat (the ORDERED union
+      of the same scans) stays flat -- pola-rs/polars#30029. polars_smoke run 38998855350: OOM
+      at 25 files whether streaming, in-memory or on two threads, local disk or OneLake; one
+      Python scan_csv over the list held 50 in 4.1 GB. SQL has neither the list (#29969) nor
+      the ordered union, so fct_price at process_limit 50 dies until one of the two lands.
+      The record filter sits in every branch; moving it there (de8e268) did not help, because
+      Polars pushes it into every scan either way. #}
   {%- for f in paths %}
   SELECT * FROM read_csv('{{ f if files is none else base ~ f }}',
     has_header => false, skip_rows => 1,

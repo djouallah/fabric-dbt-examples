@@ -431,9 +431,19 @@ probe stays as the place to try an adapter question cheaply.
   renders the run's start as a literal (pola-rs/polars#28798).
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`).
 - **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any
-  more, so the deltalake clash (djouallah/duckrun#83) cannot reach it. On the runner, a large
-  `process_limit` exhausts Polars' out-of-core disk budget in `fct_scada` before it exhausts
-  memory (`raise POLARS_OOC_DISK_BUDGET_MB`).
+  more, so the deltalake clash (djouallah/duckrun#83) cannot reach it.
+- **`process_limit: 50` DOES NOT FIT the 7 GB runner, and that is an upstream bug, not a
+  setting to lower.** The per-file `read_csv()` UNION ALL is an UNORDERED union, and Polars'
+  streaming engine runs every input of one at once: ~0.34 GB of peak RSS per file on 2.0.0,
+  twice that on the pinned main, while `pl.concat` of the same scans stays flat
+  (pola-rs/polars#30029; polars_smoke scale probe, run 38998855350 — OOM at 25 files in every
+  execution mode, while one Python `scan_csv(list)` held 50 in 4.1 GB). `fct_price` stalls or
+  takes the runner with it (pipeline runs 38916926144, 38994136728). SQL can express neither
+  way out — no path list (#29969), no ordered union — so the leg stays red at 50 until one
+  lands. **Do not cap polars' `process_limit`, relax its tests, or fold fewer files on it
+  alone**: the leg exists to surface exactly this, and a per-engine cap would also make it
+  fold different files from the other four and break parity. The scale probe
+  (`polars_smoke.yml`, `only: scale`) is how to re-check a new Polars build.
 - **Not compacted.** `compact_iceberg.py` is iceberg's alone.
 
 ## Why iceberg is not on dbt OSS 2
