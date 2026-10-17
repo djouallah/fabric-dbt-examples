@@ -4,11 +4,12 @@
 -- Determinism contract, rebuild window and dispatch_duids: the iceberg copy's, verbatim --
 -- read that header for why each piece is there. Only what dbt-polars or Polars SQL forces
 -- differs, each marked at its site:
---   * insert-only by `append` + an anti-join on {{ this }} (the LEFT JOIN at the bottom):
---     dbt-polars ignores merge_clauses, so the do-nothing merge would UPDATE.
+--   * dbt-polars' `merge` with no merge_clauses (it takes none): a matched key is UPDATED and
+--     a new one inserted, which is the merge every tree runs.
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='merge',
+    unique_key=['date', 'time', 'DUID'],
     schema='mart'
 ) }}
 
@@ -125,10 +126,4 @@ FROM daily_summary
 
 SELECT b.date, b.time, b.DUID, b.mw, b.price, b.cutoff
 FROM batch b
-{% if scoped %}
--- Insert-only: a key already stored is left alone (the DuckDB legs' WHEN MATCHED DO NOTHING).
-LEFT JOIN (SELECT date, time, DUID, 1 AS stored FROM {{ this }}) t
-  ON b.date = t.date AND b.time = t.time AND b.DUID = t.DUID
-WHERE t.stored IS NULL
-{% endif %}
 ORDER BY b.date, b.time

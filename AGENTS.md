@@ -420,8 +420,9 @@ probe stays as the place to try an adapter question cheaply.
   ignored and a do-nothing merge UPDATED matched rows; 0.4.0 rejects it, like every unknown
   model config key — so a polars model may carry only config keys dbt-polars knows. Every
   insert-only model is `append` plus an exclusion: the facts exclude files already folded
-  (their `unique_key` starts with `file`, so that is the same operation), `fct_summary` and
-  `dim_duid` anti-join `{{ this }}` on their keys.
+  (their `unique_key` starts with `file`, so that is the same operation) and `dim_duid`
+  anti-joins `{{ this }}` on its key. `fct_summary` is insert-only on no engine: it is
+  dbt-polars' `merge` with its `unique_key`, update + insert.
 - **Polars main, not a release** (pola-rs/polars@b87c8ba173, pinned in requirements/polars.txt),
   for the SQL fixes 2.0.0 lacks: an unqualified column in `IN (SELECT ...)` (#29876), `WITH`
   inside a derived table (#29877), `TIMESTAMPTZ` (#29878) and `generate_series` (#29879). So

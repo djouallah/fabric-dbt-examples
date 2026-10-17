@@ -12,14 +12,14 @@
 -- "skip dates with >= 280 intervals" crater filter) fossilised every date first written from
 -- the intraday feed and never revisited it; parity measured it 1,911-3,244 rows short.
 --
--- Insert-only on the DuckDB family, which is a real limitation and not a preference: the
--- OneLake Iceberg REST catalog rejects a matched-UPDATE branch (BadRequest 400), and the three
--- DuckDB trees run one config so duckrun and ducklake give up the update they could do.
--- Consequence: a re-emitted row carrying REVISED mw/price does NOT overwrite what is stored --
--- craters (missing keys) are repaired, changed values are not. spark does update, so a
--- revision would show up as a value difference between the engine pairs; the repair lever on
--- this side is a reset: drop the table and the next run recomputes it (--full-refresh fails
--- on the iceberg catalog: "fct_summary__dbt_tmp does not exist").
+-- The merge UPDATES a matched key and inserts a new one, as on spark and polars: a re-emitted
+-- row carrying REVISED mw/price overwrites what is stored, and craters (missing keys) are
+-- repaired. It was insert-only here until 2026-10-17, while the OneLake Iceberg REST catalog
+-- refused a commit with two updates of one type (a matched UPDATE writes data files and
+-- delete files in one commit); the catalog takes it since (testing-iceberg-rest-catalog run
+-- 38991354061), and the three DuckDB trees share this config. A reset is still a drop: the
+-- next run recomputes the table (--full-refresh fails on the iceberg catalog:
+-- "fct_summary__dbt_tmp does not exist").
 -- Not delete+insert on duckrun: that adapter implements it as a fenced full-table overwrite.
 --
 -- No merge path DELETES a row the recomputation stops producing, which is why dispatch_duids
@@ -29,7 +29,6 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key=['date', 'time', 'DUID'],
-    merge_clauses={'when_matched': [{'action': 'do_nothing'}]},
     schema='mart'
 ) }}
 
