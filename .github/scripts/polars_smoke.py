@@ -31,6 +31,7 @@ Env (the workflow supplies all of these):
     CSV_DIR             the daily CSV folder under it (default Files/csv_raw/daily)
     POLARS_SMOKE_SCHEMA namespace to build in
     POLARS_SMOKE_KEEP   "1" leaves the tables behind
+    POLARS_SMOKE_ONLY   "dbt" or "scale" runs that half alone; anything else runs both
 
 Usage:
     python .github/scripts/polars_smoke.py
@@ -55,6 +56,7 @@ CSV_DIR = (os.environ.get("CSV_DIR") or "Files/csv_raw/daily").strip("/")
 HAS_ARCHIVE_LOG = CSV_DIR == "Files/csv_raw/daily"
 SCHEMA = os.environ.get("POLARS_SMOKE_SCHEMA") or "polars_smoke"
 KEEP = os.environ.get("POLARS_SMOKE_KEEP") == "1"
+ONLY = os.environ.get("POLARS_SMOKE_ONLY") or "all"
 WORKSPACE = WAREHOUSE.split("/", 1)[0]
 
 ICEBERG_ENDPOINT = "https://onelake.table.fabric.microsoft.com/iceberg"
@@ -502,6 +504,123 @@ def probes(ctx):
     return out
 
 
+# ---- scale: what fct_price does with N files -------------------------------------------------
+# Pipeline runs 38916926144 and 38994136728 (process_limit 50) sat in polars fct_price until the
+# runner died / the run was cancelled, 17 minutes in; at process_limit 10 (38910106318) the same
+# model took 11 s. Moving the record filter into each UNION ALL branch (de8e268) changed
+# nothing. This measures it instead of guessing: fct_price's staging read, as
+# polars_staging('price', 'daily', files) renders it, on the newest N files, once per way of
+# executing it. Each cell is its own subprocess -- Polars fixes its thread pool at import -- and
+# is killed past SCALE_RSS_LIMIT or SCALE_TIMEOUT, so one blow-up cannot take the runner (and
+# the cells after it) down. No dbt, no tables: the numbers are the result.
+SCALE_FILES = (10, 25, 50)
+SCALE_RSS_LIMIT = 5.5 * 2**30   # the runner has 7 GB; past this it is an OOM in the pipeline
+SCALE_TIMEOUT = 300
+# (name, how the frame is executed, extra env). `stream` is dbt-polars 0.4.0's write path for
+# an append into Iceberg (iceberg_write_utils._iter_arrow_batches, write_mode 'lazy', the
+# default); `collect` is the same function with any other write_mode.
+SCALE_VARIANTS = (
+    ("streaming (dbt-polars default)", "stream", {}),
+    ("in-memory (write_mode != lazy)", "collect", {}),
+    ("streaming, POLARS_MAX_THREADS=2", "stream", {"POLARS_MAX_THREADS": "2"}),
+)
+SCALE_CHILD = r"""
+import json, sys, time
+import polars as pl
+sql, how = open(sys.argv[1], encoding="utf-8").read(), sys.argv[2]
+t0 = time.perf_counter()
+lf = pl.SQLContext().execute(sql, eager=False)
+if how == "stream":
+    rows = sum(b.height for b in lf.collect_batches(chunk_size=50_000_000, engine="streaming",
+                                                     maintain_order=False))
+else:
+    rows = lf.collect().height
+print(json.dumps({"rows": rows, "secs": time.perf_counter() - t0}))
+"""
+
+
+def spec_columns(record):
+    """A record's column names, in file order, read from macros/aemo_columns.sql -- the spec the
+    models render -- the way tests_py/test_aemo_columns.py reads it."""
+    import re
+    txt = (Path(__file__).resolve().parents[2] / "macros" / "aemo_columns.sql").read_text(
+        encoding="utf-8")
+    arm = re.search(r"\{%\s*(?:if|elif)\s+record == '" + record
+                    + r"'\s*%\}(.*?)(?=\{%\s*(?:elif|else)\s)", txt, re.S).group(1)
+    cols = re.search(r"'columns':\s*\[(.*?)\n\s*\],", arm, re.S).group(1)
+    return re.findall(r"\['([^']+)',\s*'[^']+'\]", cols)
+
+
+def price_staging_sql(files):
+    """polars_staging('price', 'daily', files), as macros/polars_read_csv.sql renders it: one
+    read_csv() per file, the spec's columns all VARCHAR, the DREGION filter in every branch."""
+    schema = ", ".join(f"'{c}': 'VARCHAR'" for c in spec_columns("price"))
+    return "\nUNION ALL\n".join(
+        f"SELECT * FROM read_csv('{f['abfss']}', has_header => false, skip_rows => 1, "
+        f"schema => {{{schema}}}, missing_columns => 'insert', truncate_ragged_lines => true, "
+        f"include_file_paths => 'filename') WHERE I = 'D' AND UNIT = 'DREGION' AND VERSION = '3'"
+        for f in files)
+
+
+def run_scale_cell(sql_path, how, env_extra):
+    """One cell in a child process. Returns (status, rows, secs, peak_rss_bytes)."""
+    import subprocess
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as fh:
+        fh.write(SCALE_CHILD)
+    env = {**os.environ, **env_extra}
+    t0 = time.perf_counter()
+    proc = subprocess.Popen([sys.executable, "-I", fh.name, str(sql_path), how], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    peak, status = 0, None
+    while proc.poll() is None:
+        try:
+            for line in Path(f"/proc/{proc.pid}/status").read_text().splitlines():
+                if line.startswith("VmHWM:"):
+                    peak = max(peak, int(line.split()[1]) * 1024)
+        except OSError:
+            pass
+        if peak > SCALE_RSS_LIMIT:
+            status = "OOM"
+        elif time.perf_counter() - t0 > SCALE_TIMEOUT:
+            status = "TIMEOUT"
+        if status:
+            proc.kill()
+            break
+        time.sleep(0.5)
+    out, err = proc.communicate()
+    secs = time.perf_counter() - t0
+    if status:
+        return status, None, secs, peak
+    if proc.returncode != 0:
+        return f"ERROR rc={proc.returncode}: {oneline(err[-600:], 300)}", None, secs, peak
+    res = json.loads(out.strip().splitlines()[-1])
+    return "OK", res["rows"], res["secs"], peak
+
+
+def scale(files):
+    """Every variant on SCALE_FILES newest files. A variant that fails at N is not run above N."""
+    say("\n==== SCALE: fct_price's staging read on N files ====")
+    if len(files) < SCALE_FILES[-1]:
+        say(f"     SKIP: {len(files)} landed files, need {SCALE_FILES[-1]}")
+        return []
+    results = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, how, env_extra in SCALE_VARIANTS:
+            for n in SCALE_FILES:
+                picked = files[:n]
+                gb = sum(f.get("bytes", 0) for f in picked) / 2**30
+                sql_path = Path(tmp) / f"price_{n}.sql"
+                sql_path.write_text(price_staging_sql(picked), encoding="utf-8")
+                status, rows, secs, peak = run_scale_cell(sql_path, how, env_extra)
+                line = (f"{name:34} N={n:2} ({gb:5.2f} GB of CSV): {status:7} {secs:6.1f}s "
+                        f"peak RSS {peak / 2**30:5.2f} GB" + (f", {rows} rows" if rows else ""))
+                say(f"     {line}")
+                results.append(line)
+                if status != "OK":
+                    break
+    return results
+
+
 # ---- running dbt and reading back -----------------------------------------------------------
 
 def scrub(text):
@@ -707,7 +826,8 @@ def newest_daily_files(n=2, stats=None):
         stats["listed"] = len(names)
     if not names:
         say(f"    (no CSVs under {CSV_DIR} -- has anything landed?)")
-    return [{"path": name, "stem": name.rsplit("/", 1)[1].rsplit(".", 1)[0],
+    size = {p["name"]: int(p.get("contentLength") or 0) for p in paths}
+    return [{"path": name, "stem": name.rsplit("/", 1)[1].rsplit(".", 1)[0], "bytes": size[name],
              "abfss": f"abfss://{WORKSPACE}@{ONELAKE_DFS}/{name}"} for name in names[:n]]
 
 
@@ -743,7 +863,11 @@ def banner():
 def main():
     banner()
     listing = {}
-    speed_files = newest_daily_files(SPEED_FILES, listing)
+    newest = newest_daily_files(max(SPEED_FILES, *SCALE_FILES), listing)
+    if ONLY == "scale":
+        scale(newest)
+        return
+    speed_files = newest[:SPEED_FILES]
     daily_files = speed_files[:2]
     ctx = {"catalog": iceberg_catalog(), "daily_files": daily_files, "speed_files": speed_files,
            "daily_file": daily_files[0] if daily_files else None}
@@ -810,6 +934,8 @@ def main():
     say("\n==== SUMMARY ====")
     for number, name, status, detail in results:
         say(f"[{number:2}] {status:4} {name}" + (f" -- {detail}" if detail else ""))
+    if ONLY != "dbt":
+        scale(newest)
 
 
 if __name__ == "__main__":

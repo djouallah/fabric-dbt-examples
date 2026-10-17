@@ -32,6 +32,12 @@ on:
         required: false
         default: false
         type: boolean
+      only:
+        description: all = the dbt probes, then the scale probe (fct_price's read on 10/25/50 files, peak RSS per way of executing it); dbt or scale = that half alone.
+        required: false
+        default: all
+        type: choice
+        options: [all, dbt, scale]
 
 permissions:
   id-token: write
@@ -46,6 +52,7 @@ jobs:
     env:
       POLARS_SMOKE_SCHEMA: ${{ inputs.schema }}
       POLARS_SMOKE_KEEP: ${{ inputs.keep && '1' || '0' }}
+      POLARS_SMOKE_ONLY: ${{ inputs.only }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       FABRIC_WORKSPACE_ID: ${{ secrets.FABRIC_WORKSPACE_ID }}

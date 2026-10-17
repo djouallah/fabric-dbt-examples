@@ -172,3 +172,15 @@ def test_picker_probe_uses_neither_hook_nor_merge_clauses(smoke):
     sql = _model(smoke, "m_picker")
     assert "pre_hook" not in sql and "merge_clauses" not in sql
     assert "run_query(" in sql and "this" in sql
+
+
+def test_scale_reads_what_fct_price_reads(smoke):
+    """The scale probe is only evidence about fct_price if its SQL is polars_staging('price')'s:
+    the spec's 130 columns, one read_csv() per file, the DREGION filter in every branch."""
+    assert len(smoke.spec_columns("price")) == 130
+    files = [{"abfss": f"abfss://ws@x/{s}.CSV"} for s in "ABC"]
+    sql = smoke.price_staging_sql(files)
+    assert sql.count("read_csv(") == 3 and sql.count("UNION ALL") == 2
+    assert sql.count("UNIT = 'DREGION'") == 3
+    assert "missing_columns => 'insert'" in sql and "truncate_ragged_lines => true" in sql
+    assert smoke.SCALE_FILES[-1] == 50  # the process_limit the pipeline died at
