@@ -1,0 +1,267 @@
+{
+ "inputs": {
+  "daily_download_limit": "60",
+  "dbt_schema": "mart",
+  "download_limit": "6",
+  "engines": "iceberg",
+  "mode": "local",
+  "process_limit": "50",
+  "reset_destination": "false"
+ },
+ "items": {
+  "9E690A88-F8A6-44F1-8734-D9FBA4D585D7": {
+   "kind": "Folder",
+   "name": "dbt",
+   "role": "folder"
+  },
+  "C218024D-385E-459E-BF77-38B8D9AE8225": {
+   "kind": "Lakehouse",
+   "name": "dbt",
+   "role": "data"
+  },
+  "C584E6AF-ADA1-4CE4-9957-6365B19EB0F5": {
+   "kind": "Lakehouse",
+   "name": "dbt_landing",
+   "role": "landing"
+  }
+ },
+ "layout": {
+  "config": {},
+  "detail_keys": [
+   "schema",
+   "total_rows",
+   "num_files",
+   "num_row_groups",
+   "avg_row_group",
+   "size_mb",
+   "vorder",
+   "compression"
+  ],
+  "encodings": {
+   "iceberg": {
+    "DUID": {
+     "chunks": 7,
+     "dict_pages": 7,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 10.71,
+     "type": "BYTE_ARRAY"
+    },
+    "cutoff": {
+     "chunks": 7,
+     "dict_pages": 7,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.0,
+     "type": "INT64"
+    },
+    "date": {
+     "chunks": 7,
+     "dict_pages": 7,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.01,
+     "type": "INT32"
+    },
+    "mw": {
+     "chunks": 7,
+     "dict_pages": 0,
+     "encodings": [
+      "PLAIN"
+     ],
+     "mb": 42.55,
+     "type": "INT64"
+    },
+    "price": {
+     "chunks": 7,
+     "dict_pages": 7,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 15.32,
+     "type": "INT64"
+    },
+    "time": {
+     "chunks": 7,
+     "dict_pages": 7,
+     "encodings": [
+      "PLAIN_DICTIONARY"
+     ],
+     "mb": 0.76,
+     "type": "INT32"
+    }
+   }
+  },
+  "engines": {
+   "iceberg": {
+    "guid": "c218024d-385e-459e-bf77-38b8d9ae8225",
+    "item": "dbt",
+    "kind": "Lakehouse",
+    "schema_prefix": "iceberg",
+    "writer": "duckdb (iceberg)"
+   }
+  },
+  "ordering": {
+   "iceberg": {
+    "columns": {
+     "DUID": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 7,
+      "runs": 3240595
+     },
+     "cutoff": {
+      "rg_overlap_pct": 0.0,
+      "rgs": 7,
+      "runs": 1
+     },
+     "date": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 7,
+      "runs": 1510
+     },
+     "mw": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 7,
+      "runs": 3240091
+     },
+     "price": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 7,
+      "runs": 2502230
+     },
+     "time": {
+      "rg_overlap_pct": 100.0,
+      "rgs": 7,
+      "runs": 15890
+     }
+    },
+    "sample": {
+     "file": "01a1450e-44b6-7904-b501-556725891e9d.parquet",
+     "rows": 3240662
+    },
+    "table": "iceberg_mart.fct_summary"
+   }
+  },
+  "run": {
+   "id": "38992461895",
+   "sha": "53664251d021ee9df8a33633ae13e117864563b0",
+   "written": "2026-10-17T02:00:18Z"
+  },
+  "stats": {
+   "iceberg": {
+    "dim_calendar": {
+     "avg_row_group": 3197.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "iceberg_mart",
+     "size_mb": 0.01,
+     "total_rows": 3197,
+     "vorder": false
+    },
+    "dim_duid": {
+     "avg_row_group": 690.0,
+     "compression": "SNAPPY",
+     "num_files": 1,
+     "num_row_groups": 1,
+     "schema": "iceberg_mart",
+     "size_mb": 0.02,
+     "total_rows": 690,
+     "vorder": false
+    },
+    "fct_price": {
+     "avg_row_group": 72000.0,
+     "compression": "SNAPPY",
+     "num_files": 3,
+     "num_row_groups": 3,
+     "schema": "iceberg_landing",
+     "size_mb": 27.09,
+     "total_rows": 216000,
+     "vorder": false
+    },
+    "fct_price_today": {
+     "avg_row_group": 250.0,
+     "compression": "SNAPPY",
+     "num_files": 3,
+     "num_row_groups": 3,
+     "schema": "iceberg_landing",
+     "size_mb": 0.11,
+     "total_rows": 750,
+     "vorder": false
+    },
+    "fct_scada": {
+     "avg_row_group": 263319.2,
+     "compression": "SNAPPY",
+     "num_files": 3,
+     "num_row_groups": 93,
+     "schema": "iceberg_landing",
+     "size_mb": 298.97,
+     "total_rows": 24488688,
+     "vorder": false
+    },
+    "fct_scada_today": {
+     "avg_row_group": 15305.7,
+     "compression": "SNAPPY",
+     "num_files": 3,
+     "num_row_groups": 3,
+     "schema": "iceberg_landing",
+     "size_mb": 0.33,
+     "total_rows": 45917,
+     "vorder": false
+    },
+    "fct_summary": {
+     "avg_row_group": 1418008.4,
+     "compression": "SNAPPY",
+     "num_files": 4,
+     "num_row_groups": 7,
+     "schema": "iceberg_mart",
+     "size_mb": 69.63,
+     "total_rows": 9544036,
+     "vorder": false
+    }
+   }
+  },
+  "tables": [
+   "stg_csv_archive_log",
+   "dim_calendar",
+   "dim_duid",
+   "fct_price",
+   "fct_price_today",
+   "fct_scada",
+   "fct_scada_today",
+   "fct_summary"
+  ]
+ },
+ "legs": {
+  "iceberg": {
+   "finished": "2026-10-17T01:58:22Z",
+   "outcome": "success",
+   "started": "2026-10-17T01:56:31Z"
+  }
+ },
+ "parity": {
+  "iceberg": {
+   "adapter": "duckdb",
+   "date_max": "2026-10-17",
+   "date_min": "2026-05-20",
+   "days": 151,
+   "duids": 390,
+   "engine": "iceberg",
+   "model": "fct_summary",
+   "mw_sum": 935857265.7377967,
+   "price_sum": 676253788.1929753,
+   "rows_total": 9544036
+  }
+ },
+ "run": {
+  "finished": "2026-10-17T02:00:28Z",
+  "id": "38992461895",
+  "sha": "53664251d021ee9df8a33633ae13e117864563b0",
+  "started": "2026-10-17T01:52:55Z",
+  "url": "https://github.com/djouallah/fabric-dbt-examples/actions/runs/38992461895"
+ },
+ "schema": 1
+}
