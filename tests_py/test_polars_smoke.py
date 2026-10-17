@@ -178,9 +178,22 @@ def test_scale_reads_what_fct_price_reads(smoke):
     """The scale probe is only evidence about fct_price if its SQL is polars_staging('price')'s:
     the spec's 130 columns, one read_csv() per file, the DREGION filter in every branch."""
     assert len(smoke.spec_columns("price")) == 130
-    files = [{"abfss": f"abfss://ws@x/{s}.CSV"} for s in "ABC"]
-    sql = smoke.price_staging_sql(files)
+    sql = smoke.price_staging_sql([f"abfss://ws@x/{s}.CSV" for s in "ABC"])
     assert sql.count("read_csv(") == 3 and sql.count("UNION ALL") == 2
     assert sql.count("UNIT = 'DREGION'") == 3
     assert "missing_columns => 'insert'" in sql and "truncate_ragged_lines => true" in sql
     assert smoke.SCALE_FILES[-1] == 50  # the process_limit the pipeline died at
+
+
+def test_every_scale_frame_reads_the_same_thing(smoke):
+    """A comparison between frames is only fair on the same files, columns and filter."""
+    paths = ["abfss://ws@x/A.CSV", "abfss://ws@x/B.CSV"]
+    frames = {v[1] for v in smoke.SCALE_VARIANTS}
+    assert frames == {"sql", "scan_list", "concat", "sql_local"}
+    for frame in frames:
+        spec = smoke.scale_spec(frame, "stream", paths)
+        assert spec["paths"] == paths and len(spec["columns"]) == 130
+        assert (spec["sql"] is not None) == frame.startswith("sql")
+    child = smoke.SCALE_CHILD
+    assert 'missing_columns="insert"' in child and "truncate_ragged_lines=True" in child
+    assert '(pl.col("UNIT") == "DREGION")' in child

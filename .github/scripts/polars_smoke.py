@@ -516,20 +516,39 @@ def probes(ctx):
 SCALE_FILES = (10, 25, 50)
 SCALE_RSS_LIMIT = 5.5 * 2**30   # the runner has 7 GB; past this it is an OOM in the pipeline
 SCALE_TIMEOUT = 300
-# (name, how the frame is executed, extra env). `stream` is dbt-polars 0.4.0's write path for
-# an append into Iceberg (iceberg_write_utils._iter_arrow_batches, write_mode 'lazy', the
-# default); `collect` is the same function with any other write_mode.
+# (name, frame, how it is executed, extra env). Frames: `sql` is fct_price's SQL over OneLake;
+# `scan_list` is ONE Python scan_csv over the list, the form SQL read_csv() cannot express
+# (pola-rs/polars#29969); `concat` is pl.concat of one scan_csv per file, which is what the SQL
+# UNION ALL plans to; `sql_local` is the SQL over copies on the runner's disk, which separates
+# reading OneLake from parsing. Same files, schema, options and DREGION filter in every frame.
+# `stream` is dbt-polars 0.4.0's write path for an append into Iceberg
+# (iceberg_write_utils._iter_arrow_batches, write_mode 'lazy', the default); `collect` is the
+# same function with any other write_mode.
 SCALE_VARIANTS = (
-    ("streaming (dbt-polars default)", "stream", {}),
-    ("in-memory (write_mode != lazy)", "collect", {}),
-    ("streaming, POLARS_MAX_THREADS=2", "stream", {"POLARS_MAX_THREADS": "2"}),
+    ("SQL UNION ALL, streaming", "sql", "stream", {}),
+    ("SQL UNION ALL, in-memory", "sql", "collect", {}),
+    ("SQL UNION ALL, streaming, 2 threads", "sql", "stream", {"POLARS_MAX_THREADS": "2"}),
+    ("python scan_csv(list), streaming", "scan_list", "stream", {}),
+    ("python concat(scan_csv), streaming", "concat", "stream", {}),
+    ("SQL UNION ALL, local disk, streaming", "sql_local", "stream", {}),
 )
 SCALE_CHILD = r"""
 import json, sys, time
 import polars as pl
-sql, how = open(sys.argv[1], encoding="utf-8").read(), sys.argv[2]
+spec = json.load(open(sys.argv[1], encoding="utf-8"))
+frame, how, paths = spec["frame"], spec["how"], spec["paths"]
+opts = dict(has_header=False, skip_rows=1, schema={c: pl.String for c in spec["columns"]},
+            missing_columns="insert", truncate_ragged_lines=True, include_file_paths="filename")
+if not frame.endswith("local"):
+    opts["storage_options"] = {"bearer_token": spec["token"]}
+dregion = (pl.col("I") == "D") & (pl.col("UNIT") == "DREGION") & (pl.col("VERSION") == "3")
 t0 = time.perf_counter()
-lf = pl.SQLContext().execute(sql, eager=False)
+if frame.startswith("sql"):
+    lf = pl.SQLContext().execute(spec["sql"], eager=False)
+elif frame == "scan_list":
+    lf = pl.scan_csv(paths, **opts).filter(dregion)
+else:
+    lf = pl.concat([pl.scan_csv(p, **opts).filter(dregion) for p in paths])
 if how == "stream":
     rows = sum(b.height for b in lf.collect_batches(chunk_size=50_000_000, engine="streaming",
                                                      maintain_order=False))
@@ -551,25 +570,47 @@ def spec_columns(record):
     return re.findall(r"\['([^']+)',\s*'[^']+'\]", cols)
 
 
-def price_staging_sql(files):
+def price_staging_sql(paths):
     """polars_staging('price', 'daily', files), as macros/polars_read_csv.sql renders it: one
     read_csv() per file, the spec's columns all VARCHAR, the DREGION filter in every branch."""
     schema = ", ".join(f"'{c}': 'VARCHAR'" for c in spec_columns("price"))
     return "\nUNION ALL\n".join(
-        f"SELECT * FROM read_csv('{f['abfss']}', has_header => false, skip_rows => 1, "
+        f"SELECT * FROM read_csv('{p}', has_header => false, skip_rows => 1, "
         f"schema => {{{schema}}}, missing_columns => 'insert', truncate_ragged_lines => true, "
         f"include_file_paths => 'filename') WHERE I = 'D' AND UNIT = 'DREGION' AND VERSION = '3'"
-        for f in files)
+        for p in paths)
 
 
-def run_scale_cell(sql_path, how, env_extra):
+def scale_spec(frame, how, paths):
+    """What one cell's child reads: the same files, columns and filter whatever the frame."""
+    return {"frame": frame, "how": how, "paths": paths, "columns": spec_columns("price"),
+            "sql": price_staging_sql(paths) if frame.startswith("sql") else None,
+            "token": TOKEN}
+
+
+def download(files, folder):
+    """The files to the runner's disk, streamed from the OneLake DFS endpoint."""
+    import urllib.request
+    out = []
+    for f in files:
+        dest = Path(folder) / f["path"].rsplit("/", 1)[1]
+        if not dest.exists():
+            req = urllib.request.Request(f"https://{ONELAKE_DFS}/{WORKSPACE}/{f['path']}",
+                                         headers={"Authorization": f"Bearer {TOKEN}"})
+            with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as fh:
+                shutil.copyfileobj(r, fh, 8 << 20)
+        out.append(str(dest))
+    return out
+
+
+def run_scale_cell(spec_path, env_extra):
     """One cell in a child process. Returns (status, rows, secs, peak_rss_bytes)."""
     import subprocess
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as fh:
         fh.write(SCALE_CHILD)
     env = {**os.environ, **env_extra}
     t0 = time.perf_counter()
-    proc = subprocess.Popen([sys.executable, "-I", fh.name, str(sql_path), how], env=env,
+    proc = subprocess.Popen([sys.executable, "-I", fh.name, str(spec_path)], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     peak, status = 0, None
     while proc.poll() is None:
@@ -605,14 +646,19 @@ def scale(files):
         return []
     results = []
     with tempfile.TemporaryDirectory() as tmp:
-        for name, how, env_extra in SCALE_VARIANTS:
+        local = Path(tmp) / "csv"
+        local.mkdir()
+        for name, frame, how, env_extra in SCALE_VARIANTS:
             for n in SCALE_FILES:
                 picked = files[:n]
                 gb = sum(f.get("bytes", 0) for f in picked) / 2**30
-                sql_path = Path(tmp) / f"price_{n}.sql"
-                sql_path.write_text(price_staging_sql(picked), encoding="utf-8")
-                status, rows, secs, peak = run_scale_cell(sql_path, how, env_extra)
-                line = (f"{name:34} N={n:2} ({gb:5.2f} GB of CSV): {status:7} {secs:6.1f}s "
+                paths = (download(picked, local) if frame.endswith("local")
+                         else [f["abfss"] for f in picked])
+                spec_path = Path(tmp) / "cell.json"
+                spec_path.write_text(json.dumps(scale_spec(frame, how, paths)), encoding="utf-8")
+                status, rows, secs, peak = run_scale_cell(spec_path, env_extra)
+                spec_path.unlink()
+                line = (f"{name:36} N={n:2} ({gb:5.2f} GB of CSV): {status:7} {secs:6.1f}s "
                         f"peak RSS {peak / 2**30:5.2f} GB" + (f", {rows} rows" if rows else ""))
                 say(f"     {line}")
                 results.append(line)
