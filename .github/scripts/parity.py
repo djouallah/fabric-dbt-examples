@@ -79,7 +79,10 @@ def compare(in_dir: Path) -> int:
         print(f"only {len(fps)} fingerprint(s) in {in_dir}; need at least 2 to compare")
         return 0
 
-    engines = sorted(fps)
+    # spark (PySpark + delta-spark) is the reference implementation: every other engine is
+    # graded against it, and against the first name alphabetically only when it did not build.
+    # dashboard/index.html's grade() picks the same baseline.
+    engines = sorted(fps, key=lambda e: (e != "spark", e))
     print(f"comparing {len(engines)} engines: {', '.join(engines)}\n")
     header = "field".ljust(14) + "".join(e.rjust(20) for e in engines)
     print(header)

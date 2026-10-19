@@ -1,5 +1,5 @@
 {
-  "engines": ["duckrun", "iceberg", "ducklake", "spark", "polars"],
+  "engines": ["spark", "iceberg", "duckrun", "ducklake", "polars"],
   "groups": ["Incremental", "Reading files", "dbt features", "Catalog & credentials", "Maintenance", "Dialect"],
   "rows": [
     {

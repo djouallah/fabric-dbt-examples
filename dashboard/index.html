@@ -229,7 +229,7 @@ h2.sec { font-size: 15px; margin: 22px 0 6px; }
     <p>What does not abstract away shows up on every model, and it is not the axis people expect. Whether an engine is distributed or single-node barely matters: nothing in the five copies of a model cares that Spark has executors and DuckDB has one process.</p>
     <p>What matters is the dialect (<a href="#syntax">Syntax</a>), and what each engine, adapter and catalog actually implements: which merge shapes the catalog accepts, whether the adapter honours a config or silently ignores it, how a CSV can be read at all, whether there are hooks (<a href="#engines">Engines</a>).</p>
     <p>When an engine or adapter gets it wrong, the bug is filed upstream (<a href="#bugs">Bugs</a>).</p>
-    <p>The engines: <b>duckrun</b> (DuckDB writing Delta via delta-rs), <b>iceberg</b> (dbt-duckdb into the OneLake Iceberg REST catalog), <b>ducklake</b> (dbt-duckdb, DuckLake with its catalog in a Fabric SQL DB, plus a Delta export), <b>spark</b> (dbt-spark on local PySpark, Delta) and <b>polars</b> (dbt-polars, Polars SQL, Iceberg via pyiceberg).</p>
+    <p>The engines: <b>spark</b> (dbt-spark on local PySpark, Delta via delta-spark: the reference implementation, and the baseline the others are graded against), <b>iceberg</b> (dbt-duckdb into the OneLake Iceberg REST catalog), <b>duckrun</b> (DuckDB writing Delta via delta-rs), <b>ducklake</b> (dbt-duckdb, DuckLake with its catalog in a Fabric SQL DB, plus a Delta export) and <b>polars</b> (dbt-polars, Polars SQL, Iceberg via pyiceberg).</p>
     <p>More: <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/thesis.md">the thesis</a>, <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/engine-nuances.md">engine nuances</a>, <a href="https://github.com/djouallah/fabric-dbt-examples/blob/main/docs/candidate-engines.md">candidate engines</a>, and <a href="dbt/">the dbt DAG and catalog</a>.</p>
   </section>
 </main>
@@ -237,11 +237,12 @@ h2.sec { font-size: 15px; margin: 22px 0 6px; }
 
 <script>
 const REPO = "https://github.com/djouallah/fabric-dbt-examples";
+// spark first: PySpark + delta-spark is the reference implementation and the parity baseline.
 const ENG = {
-  duckrun:  {label: "duckrun",  adapter: "duckrun · Delta"},
-  iceberg:  {label: "iceberg",  adapter: "dbt-duckdb · Iceberg"},
-  ducklake: {label: "ducklake", adapter: "dbt-duckdb · DuckLake"},
   spark:    {label: "spark",    adapter: "dbt-spark · Delta"},
+  iceberg:  {label: "iceberg",  adapter: "dbt-duckdb · Iceberg"},
+  duckrun:  {label: "duckrun",  adapter: "duckrun · Delta"},
+  ducklake: {label: "ducklake", adapter: "dbt-duckdb · DuckLake"},
   polars:   {label: "polars",   adapter: "dbt-polars · Iceberg"},
 };
 const ORDER = Object.keys(ENG);
@@ -303,11 +304,12 @@ addEventListener("hashchange", route);
 
 // ---------- parity ----------
 // The rule is parity.py's (EXACT / APPROX / REL_TOL), shipped in runs.json as `rule` by
-// dashboard_data.py, and so is the reference: the first engine in sorted order, as compare() does.
+// dashboard_data.py, and so is the reference: spark, as compare() does, else the first engine
+// in ORDER when the spark leg did not build.
 // A leg that FAILED this run still leaves a fingerprint of whatever an earlier run wrote, so it is
 // shown but not graded: it says nothing about this run's table.
 function grade(run, rule) {
-  const names = Object.keys(run.parity).filter(e => !legFailed(run, e)).sort();
+  const names = ORDER.filter(e => run.parity[e] && !legFailed(run, e));
   const base = names[0], b = run.parity[base], cells = {};
   let agree = true;
   for (const e of names) {
@@ -336,7 +338,7 @@ function renderParity(sub) {
     $("parity-chips").innerHTML = runs.slice(0, 8).map(r =>
       `<button aria-pressed="${r === run}" data-run="${r.run}">${when(r.finished)} · ${grade(r, d.rule).names.length} engines</button>`).join("");
     $("parity-chips").onclick = ev => { const b = ev.target.closest("button"); if (b) location.hash = `parity/${b.dataset.run}`; };
-    $("parity-caption").innerHTML = `Run <a href="${esc(run.url)}">${esc(run.run)}</a> (${esc(run.sha)}) · fct_summary fingerprinted through each engine's own adapter · counts and dates exact, money within ${d.rule.rel_tol} relative · reference: <b>${esc(g.base)}</b>, the first name in order, as parity.py does.`;
+    $("parity-caption").innerHTML = `Run <a href="${esc(run.url)}">${esc(run.run)}</a> (${esc(run.sha)}) · fct_summary fingerprinted through each engine's own adapter · counts and dates exact, money within ${d.rule.rel_tol} relative · reference: <b>${esc(g.base)}</b>${g.base === "spark" ? ", PySpark + delta-spark, the reference implementation" : ", standing in because spark did not build"}, as parity.py does.`;
     const bad = g.names.filter(e => !g.cells[e].all);
     const failed = ORDER.filter(e => legFailed(run, e));
     const tail = failed.length ? ` The ${failed.map(esc).join(", ")} leg failed this run and is not graded.` : "";

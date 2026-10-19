@@ -33,8 +33,11 @@ def test_the_curated_files_exist_and_parse():
 def test_the_engine_columns_are_the_five_engines():
     """An engine added to (or dropped from) the project must show up on the page -- the
     matrix and the snippets are the two views that would otherwise silently omit it."""
-    assert data("capability")["engines"] == ENGINES
-    assert data("syntax")["engines"] == ENGINES
+    page = re.findall(r"^  (\w+): +\{label:", (DASH / "index.html").read_text(encoding="utf-8"), re.M)
+    assert sorted(page) == sorted(ENGINES), page
+    assert page[0] == "spark", "spark is the reference implementation and the parity baseline"
+    assert data("capability")["engines"] == page
+    assert data("syntax")["engines"] == page
     assert dashboard_data.ENGINES.keys() == set(ENGINES)
 
 

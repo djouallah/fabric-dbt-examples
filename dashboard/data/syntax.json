@@ -1,15 +1,15 @@
 {
-  "engines": ["duckrun", "iceberg", "ducklake", "spark", "polars"],
+  "engines": ["spark", "iceberg", "duckrun", "ducklake", "polars"],
   "concepts": [
     {
       "id": "read-csv",
       "title": "Read a ragged CSV",
       "why": "An AEMO PUBLIC_DAILY file holds several record types of different widths, plus comment rows. Spark reads it as asked; DuckDB and Polars need the columns spelled out and short rows padded; Polars reads one file per call.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "macros/duckdb_read_csv.sql",
-         "code": "read_csv(\n  getvariable('scada_daily_paths'),\n  skip = 1, header = 0,\n  all_varchar = 1,\n  columns = { 'I': 'VARCHAR', ... },\n  filename = 1,\n  null_padding = true,\n  ignore_errors = 1,\n  auto_detect = false\n)"},
         {"engines": ["spark"], "path": "dbt1/macros/spark_read_csv.sql",
          "code": "CREATE OR REPLACE TEMPORARY VIEW raw_scada\n  (`I` STRING, `UNIT` STRING, ...)\nUSING csv OPTIONS (\n  path '<folder>/{f1.CSV,f2.CSV}',\n  header 'true',\n  mode 'PERMISSIVE'\n)"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "macros/duckdb_read_csv.sql",
+         "code": "read_csv(\n  getvariable('scada_daily_paths'),\n  skip = 1, header = 0,\n  all_varchar = 1,\n  columns = { 'I': 'VARCHAR', ... },\n  filename = 1,\n  null_padding = true,\n  ignore_errors = 1,\n  auto_detect = false\n)"},
         {"engines": ["polars"], "path": "macros/polars_read_csv.sql",
          "code": "SELECT * FROM read_csv('<folder>/f1.CSV',\n  has_header => false, skip_rows => 1,\n  schema => {'I': 'VARCHAR', 'UNIT': 'VARCHAR', ...},\n  missing_columns => 'insert',\n  truncate_ragged_lines => true,\n  include_file_paths => 'filename')\nUNION ALL\nSELECT * FROM read_csv('<folder>/f2.CSV', ...)"}
       ]
@@ -20,10 +20,10 @@
       "silent": "Spark's CAST returns NULL for a slash date instead of an error, so the whole column went NULL with every test green.",
       "why": "AEMO ships slashes.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
-         "code": "CAST(SETTLEMENTDATE AS TIMESTAMPTZ) AS SETTLEMENTDATE"},
         {"engines": ["spark"], "path": "dbt1/models/aemo/spark/marts/fct_scada.sql",
          "code": "to_timestamp(SETTLEMENTDATE, 'yyyy/MM/dd HH:mm:ss') AS SETTLEMENTDATE"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
+         "code": "CAST(SETTLEMENTDATE AS TIMESTAMPTZ) AS SETTLEMENTDATE"},
         {"engines": ["polars"], "path": "dbt1/models/aemo/polars/marts/fct_scada.sql",
          "code": "CAST(SETTLEMENTDATE AS TIMESTAMPTZ) AS SETTLEMENTDATE\n-- TIMESTAMPTZ: Polars main only (pola-rs/polars#29878)"}
       ]
@@ -34,10 +34,10 @@
       "silent": "Spark resolves STRING != 0 by casting the string to INT, which truncates: '0.5' != 0 is false. That dropped 12-16% of the intraday SCADA rows.",
       "why": "Every column of a CSV read is a string until something types it.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "macros/duckdb_read_csv.sql",
-         "code": "WHERE SCADAVALUE != 0\n-- the reader already typed SCADAVALUE as DOUBLE"},
         {"engines": ["spark"], "path": "dbt1/macros/spark_read_csv.sql",
          "code": "WHERE CAST(SCADAVALUE AS DOUBLE) != 0"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "macros/duckdb_read_csv.sql",
+         "code": "WHERE SCADAVALUE != 0\n-- the reader already typed SCADAVALUE as DOUBLE"},
         {"engines": ["polars"], "path": "macros/polars_read_csv.sql",
          "code": "WHERE CAST(SCADAVALUE AS DOUBLE) <> 0"}
       ]
@@ -47,10 +47,10 @@
       "title": "Time of day as HHMM",
       "why": "fct_summary.time is HHMM, not minutes past midnight.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake", "polars"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
-         "code": "CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) AS time"},
         {"engines": ["spark"], "path": "dbt1/models/aemo/spark/marts/fct_summary.sql",
-         "code": "CAST(date_format(s.SETTLEMENTDATE, 'HHmm') AS INT) AS time"}
+         "code": "CAST(date_format(s.SETTLEMENTDATE, 'HHmm') AS INT) AS time"},
+        {"engines": ["iceberg", "duckrun", "ducklake", "polars"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
+         "code": "CAST(strftime(s.SETTLEMENTDATE, '%H%M') AS INT) AS time"}
       ]
     },
     {
@@ -58,10 +58,10 @@
       "title": "The last 6 days",
       "why": "fct_summary recomputes every date that could still be stale.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake", "polars"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
-         "code": "WHERE s.DATE >= (SELECT MAX(DATE) - INTERVAL 6 DAY\n                 FROM {{ ref('fct_scada') }})"},
         {"engines": ["spark"], "path": "dbt1/models/aemo/spark/marts/fct_summary.sql",
-         "code": "WHERE s.DATE >= (SELECT date_sub(MAX(DATE), 6)\n                 FROM {{ ref('fct_scada') }})"}
+         "code": "WHERE s.DATE >= (SELECT date_sub(MAX(DATE), 6)\n                 FROM {{ ref('fct_scada') }})"},
+        {"engines": ["iceberg", "duckrun", "ducklake", "polars"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
+         "code": "WHERE s.DATE >= (SELECT MAX(DATE) - INTERVAL 6 DAY\n                 FROM {{ ref('fct_scada') }})"}
       ]
     },
     {
@@ -69,10 +69,10 @@
       "title": "File name without extension",
       "why": "Every fact row keeps the file it came from. The one macro with a dialect branch inside it.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake", "polars"], "path": "macros/parse_filename.sql",
-         "code": "split_part(split_part(filename, '/', -1), '.', 1)"},
         {"engines": ["spark"], "path": "macros/parse_filename.sql",
-         "code": "substring_index(element_at(split(_fname, '/'), -1), '.', 1)\n-- _fname = input_file_name(), captured in the stage table"}
+         "code": "substring_index(element_at(split(_fname, '/'), -1), '.', 1)\n-- _fname = input_file_name(), captured in the stage table"},
+        {"engines": ["iceberg", "duckrun", "ducklake", "polars"], "path": "macros/parse_filename.sql",
+         "code": "split_part(split_part(filename, '/', -1), '.', 1)"}
       ]
     },
     {
@@ -80,10 +80,10 @@
       "title": "Pick this run's files",
       "why": "Same rule everywhere: files not folded yet, newest first, at most process_limit. What differs is where the query can run.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
-         "code": "pre_hook=\"SET VARIABLE scada_daily_paths = (\n  SELECT list(... || archive_path) FROM (\n    SELECT DISTINCT archive_path FROM {{ ref('stg_csv_archive_log') }}\n    WHERE ... ORDER BY archive_path DESC\n    LIMIT {{ env_var('process_limit') }}))\"\n-- model body: read_csv(getvariable('scada_daily_paths'), ...)"},
         {"engines": ["spark"], "path": "dbt1/macros/spark_new_files.sql",
          "code": "{% for ap in run_query(q).columns[0].values() %}\n  {% do names.append(ap.split('/')[-1]) %}\n{% endfor %}\n-- at run time, inside the pre_hook macro,\n-- rendered into path '<folder>/{a.CSV,b.CSV}'"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
+         "code": "pre_hook=\"SET VARIABLE scada_daily_paths = (\n  SELECT list(... || archive_path) FROM (\n    SELECT DISTINCT archive_path FROM {{ ref('stg_csv_archive_log') }}\n    WHERE ... ORDER BY archive_path DESC\n    LIMIT {{ env_var('process_limit') }}))\"\n-- model body: read_csv(getvariable('scada_daily_paths'), ...)"},
         {"engines": ["polars"], "path": "macros/polars_read_csv.sql",
          "code": "{% if execute and flags.WHICH in ('run','build','retry') %}\n  {% for row in run_query(q).rows %} ... {% endfor %}\n{% endif %}\n-- at PARSE time: dbt-polars has no SQL hooks,\n-- so each file becomes its own read_csv()"}
       ]
@@ -93,10 +93,10 @@
       "title": "Insert only, never update",
       "why": "The facts only ever add rows. Three engines say it the same way; the other two cannot.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
-         "code": "{{ config(\n    materialized='incremental',\n    incremental_strategy='merge',\n    merge_clauses={'when_matched':\n      [{'action': 'do_nothing'}]},\n    unique_key=spec['unique_key']) }}"},
         {"engines": ["spark"], "path": "dbt1/models/aemo/spark/marts/fct_scada.sql",
          "code": "{{ config(\n    materialized='incremental',\n    incremental_strategy='merge',\n    file_format='delta',\n    unique_key=['file', 'DUID',\n      'SETTLEMENTDATE', 'INTERVENTION']) }}\n-- a matched key UPDATES"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_scada.sql",
+         "code": "{{ config(\n    materialized='incremental',\n    incremental_strategy='merge',\n    merge_clauses={'when_matched':\n      [{'action': 'do_nothing'}]},\n    unique_key=spec['unique_key']) }}"},
         {"engines": ["polars"], "path": "dbt1/models/aemo/polars/marts/fct_scada.sql",
          "code": "{{ config(\n    materialized='incremental',\n    incremental_strategy='append') }}\n-- merge_clauses is ignored by dbt-polars,\n-- so: append only the files not folded yet"}
       ]
@@ -107,10 +107,10 @@
       "silent": "Same text, different answer on a tie: Spark rounds HALF_UP, DuckDB HALF_EVEN. parity.py gives the money columns a 1e-7 relative tolerance for exactly this.",
       "why": "The money columns of fct_summary.",
       "panels": [
-        {"engines": ["duckrun", "iceberg", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
-         "code": "CAST(mw AS DECIMAL(18, 4)) AS mw\n-- ties: HALF_EVEN"},
         {"engines": ["spark"], "path": "dbt1/models/aemo/spark/marts/fct_summary.sql",
          "code": "CAST(mw AS DECIMAL(18, 4)) AS mw\n-- ties: HALF_UP"},
+        {"engines": ["iceberg", "duckrun", "ducklake"], "path": "dbt1/models/aemo/duckrun/marts/fct_summary.sql",
+         "code": "CAST(mw AS DECIMAL(18, 4)) AS mw\n-- ties: HALF_EVEN"},
         {"engines": ["polars"], "path": "dbt1/models/aemo/polars/marts/fct_summary.sql",
          "code": "CAST(mw AS DECIMAL(18, 4)) AS mw\n-- tie rule not measured here"}
       ]
