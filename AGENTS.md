@@ -314,7 +314,12 @@ cd dbt1 && dbt build --target duckrun --profiles-dir .
   of target names.
 - **duckrun maintenance is built in** (compaction on byte debt, vacuum after). Do not add
   OPTIMIZE/VACUUM jobs for it. Iceberg is the opposite: it has no snapshot expiry, so
-  `compact_iceberg.py` is a real job — and it speeds up reads without shrinking storage.
+  `compact_iceberg.py` is a real job — and it speeds up reads without shrinking storage. It
+  compacts BOTH Iceberg writers, `iceberg` and `polars` (`COMPACT_ENGINES`, from the dispatch
+  input), each under its own schemas; `tests_py/test_pipeline_compact.py` pins both. It
+  carries an explicit `azure` storage secret, because vended credentials stopped being applied
+  (runs 38992461895, 38992730624: every table `Unauthorized` on its first metadata read, a
+  duckdb regression). Take the secret out only with a run proving vending works without it.
 - **`iceberg_rewrite_data_files` SPLITS as readily as it merges, so give it all three size
   bounds.** It bin-packs toward `target_file_size_bytes` the way Spark's `rewrite_data_files`
   does: leave `min_file_size_bytes` / `max_file_size_bytes` defaulted and they bracket the
@@ -446,7 +451,10 @@ probe stays as the place to try an adapter question cheaply.
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`).
 - **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any
   more, so the deltalake clash (djouallah/duckrun#83) cannot reach it.
-- **Not compacted.** `compact_iceberg.py` is iceberg's alone.
+- **Compacted with iceberg's tables.** The `compact` job runs `compact_iceberg.py` over
+  `polars_landing` / `polars_mart` too: dbt-polars appends a data file per table per run and
+  never compacts. `stg_csv_archive_log` is not listed: on polars it is a `table` model,
+  replaced whole every run.
 
 ## Why iceberg is not on dbt OSS 2
 

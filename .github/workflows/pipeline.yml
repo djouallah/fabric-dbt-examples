@@ -458,7 +458,8 @@ jobs:
           if-no-files-found: ignore
 
   # Iceberg accumulates small files and has no snapshot expiry, so compaction is a job of its
-  # own. `needs` is for ORDERING only — never overlap a rewrite with a load, and never let the
+  # own -- for BOTH Iceberg writers, `iceberg` (dbt-duckdb) and `polars` (dbt-polars), which
+  # share the one OneLake catalog under their own schemas. `needs` is for ORDERING only — never overlap a rewrite with a load, and never let the
   # `layout` job below measure a table mid-rewrite — and it must NOT gate on the build
   # succeeding: fragmentation is just as real after a failed build.
   #
@@ -466,8 +467,8 @@ jobs:
   # entry. That is the one thing lost by inlining the leg here rather than in a reusable
   # workflow of its own, and it costs wall-clock only.
   compact:
-    name: compact iceberg
-    if: ${{ (inputs.engines == 'all' || inputs.engines == 'iceberg') && !cancelled() }}
+    name: compact iceberg + polars
+    if: ${{ contains(fromJSON('["all", "iceberg", "polars"]'), inputs.engines) && !cancelled() }}
     needs: [land, build, fabric]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -478,6 +479,8 @@ jobs:
     env:
       COMPACT_BUDGET_MINUTES: "70"
       COMPACT_MIN_INPUT_FILES: "5"
+      # The Iceberg writers this run built: both on `all`, else the one engine dispatched.
+      COMPACT_ENGINES: ${{ inputs.engines == 'all' && 'iceberg polars' || inputs.engines }}
       PYTHONUNBUFFERED: "1"
       # Separate job, so $GITHUB_ENV from the legs does not reach it. Without this the script
       # would resolve iceberg_landing/iceberg_mart while the run built into

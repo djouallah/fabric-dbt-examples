@@ -81,3 +81,31 @@ def test_the_legs_do_not_land():
         "a build leg runs download_aemo.py again -- five of them race on "
         "csv_raw_archive_log.parquet, and the engines would be compared on different inputs"
     )
+
+
+def test_compaction_covers_both_iceberg_writers():
+    """iceberg (dbt-duckdb) and polars (dbt-polars) both append Iceberg files to the one OneLake
+    catalog and neither compacts: the job must run for either, and the script must list both."""
+    import os
+    import sys
+
+    compact = jobs()["compact"]
+    cond = str(compact["if"])
+    assert all(e in cond for e in ('"all"', '"iceberg"', '"polars"')), cond
+    assert "iceberg polars" in str(compact["env"]["COMPACT_ENGINES"])
+
+    os.environ.update(ONELAKE_TOKEN="x", FABRIC_WORKSPACE_ID="w", DATA_LAKEHOUSE_ID="l")
+    os.environ.pop("COMPACT_ENGINES", None)
+    sys.path.insert(0, str(REPO / ".github" / "scripts"))
+    import compact_iceberg  # noqa: PLC0415
+
+    schemas = {t.split(".")[0] for t in compact_iceberg.TABLES}
+    assert schemas == {"iceberg_landing", "iceberg_mart", "polars_landing", "polars_mart"}
+
+
+def test_compaction_carries_an_explicit_storage_secret():
+    """Vended credentials stopped being applied (runs 38992461895, 38992730624: every table
+    Unauthorized on its first metadata read). Remove the secret only with a run proving
+    vending works without it."""
+    src = (REPO / ".github" / "scripts" / "compact_iceberg.py").read_text(encoding="utf-8")
+    assert "CREATE SECRET onelake_storage (TYPE azure, PROVIDER access_token" in src

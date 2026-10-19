@@ -1,5 +1,9 @@
 """Compact the OneLake Iceberg catalog's data files (post-load maintenance).
 
+TWO ENGINES WRITE ICEBERG into that one catalog: `iceberg` (dbt-duckdb) and `polars`
+(dbt-polars, through pyiceberg). Both append a data file per table per run and neither
+compacts, so this runs over both, each under its own schemas (COMPACT_ENGINES, below).
+
 Every model the iceberg leg WRITES is an insert-only incremental merge — that is deliberate
 (OneLake accepts one add-snapshot per commit), but it means each dbt run appends another
 small data file per table and nothing ever folds them back together. This runs
@@ -24,24 +28,22 @@ an R2-backed catalog. What differs here:
     "non-trailing parts must be equal length" rule; OneLake writes go through the azure
     extension over abfss:// and never touch the S3 uploader.
 
-CREDENTIALS ARE VENDED BY THE CATALOG, here and in the dbt leg. The only token this script
-holds goes to the ATTACH, for the REST catalog; every data-file read and write runs on the
-storage credentials the catalog hands back per table (OneLake IRC vends
-`adls.sas-token.onelake.dfs.fabric.microsoft.com`, usable since duckdb/duckdb-iceberg#1331,
-merged 2026-08-19, which stopped dropping the endpoint suffix). dbt1/profiles.yml's iceberg
-output now attaches the same way and carries no azure secret either -- this script proved it
-first. It could and the dbt leg could not only while that leg ran on dbt OSS 2, which bundles
-duckdb 1.5.3; both are on `--pre duckdb` now.
-
-Two earlier workarounds were removed on 2026-09-17, each after a run proved it unneeded:
-  - a priming iceberg_metadata() scan before every rewrite, for duckdb/iceberg#1349
-    (iceberg_rewrite_data_files not loading catalog credentials). Run 35234519405 rewrote
-    fct_scada 62 -> 3, fct_summary 7 -> 1 and stg_csv_archive_log 5 -> 1 cold, with no scan
-    and no credential error.
-  - ACCESS_DELEGATION_MODE 'none' plus an explicit azure secret, inherited from the dbt 2
-    profile (see above).
-If a credential error ever comes back, the report line names it; do not put either back
-without a failing run to point at.
+AN EXPLICIT STORAGE SECRET, AGAIN -- credential vending stopped working. The ATTACH token
+authorises the REST catalog; the data and metadata files are read with an `azure` secret on
+the same OneLake token (provider access_token), the way dbt1/profiles.yml's iceberg output
+already carries one for Files/. Vending is left on (no ACCESS_DELEGATION_MODE), so it takes
+over again when the regression is fixed.
+  - Runs 38992461895 and 38992730624 (duckdb v2.0.0-alpha48624 / ffe0b8b7a2, iceberg extension
+    10eafd0b34) failed EVERY table on its first metadata read: "AzureStorageFileSystem open
+    file '.../metadata/snap-....avro' failed with code 'Unauthorized'". The vended
+    `adls.sas-token.onelake.dfs.fabric.microsoft.com` credential (usable since
+    duckdb/duckdb-iceberg#1331) is no longer applied -- a duckdb regression, nothing that
+    changed here. The compact job installs an unpinned `--pre duckdb`, so it is the first to
+    see one.
+  - History: the secret was removed on 2026-09-17, together with ACCESS_DELEGATION_MODE
+    'none' and a priming iceberg_metadata() scan for duckdb/iceberg#1349, once run
+    35234519405 rewrote fct_scada 62 -> 3 cold on vended credentials alone. Take the secret
+    out again only with a run that proves vending works without it.
 
 Known limitations of the upstream function:
   - manifest-level column statistics are not populated for rewritten files
@@ -114,40 +116,54 @@ BUDGET_MINUTES = float(os.environ.get("COMPACT_BUDGET_MINUTES", "70"))
 # script is not a dbt run, so it sets it itself. Same default, same env var.
 AZURE_TRANSPORT = os.environ.get("AZURE_TRANSPORT_OPTION_TYPE", "default")
 
+# WHICH ENGINES. The Iceberg writers built this run, space-separated, from the dispatch input
+# (pipeline.yml). Anything that is not an Iceberg writer is ignored rather than guessed at.
+ICEBERG_WRITERS = ("iceberg", "polars")
+ENGINES = [e for e in os.environ.get("COMPACT_ENGINES", "iceberg polars").split()
+           if e in ICEBERG_WRITERS]
+
 # The schemas are resolved the SAME WAY macros/generate_schema_name.sql resolves them, and
 # must stay in step with it: this script is not a dbt run, so nothing else would catch a
-# drift. All five engines share one lakehouse, so the iceberg tables live under
-# `iceberg_landing` / `iceberg_mart`; compacting a bare `landing`/`mart` would either find
+# drift. All five engines share one lakehouse, so each writer's tables live under
+# `<engine>_landing` / `<engine>_mart`; compacting a bare `landing`/`mart` would either find
 # nothing (and report a tidy catalog, wrongly) or reach into another engine's schema.
 _DBT_SCHEMA = os.environ.get("DBT_SCHEMA", "mart")
-_PREFIX = "iceberg" if _DBT_SCHEMA == "mart" else f"{_DBT_SCHEMA}_iceberg"
-LANDING, MART = f"{_PREFIX}_landing", f"{_PREFIX}_mart"
+
+
+def schemas(engine):
+    prefix = engine if _DBT_SCHEMA == "mart" else f"{_DBT_SCHEMA}_{engine}"
+    return f"{prefix}_landing", f"{prefix}_mart"
+
 
 # Hand-ordered, not discovered — we know the models, and listing them costs a metadata scan
 # per table for nothing. A new model just gets added here.
 #
 # Ordered by expected fragmentation and by what we'd least regret dropping if the budget runs
 # out: the dashboard-facing tables first (they take an append every run and are what Power BI
-# reads), then the staging log, then the small dimensions, then the big historical facts last
-# — those are the slowest to rewrite and the least sensitive to small-file overhead.
+# reads), then the small dimensions, then the big historical facts last — those are the
+# slowest to rewrite and the least sensitive to small-file overhead. Engines interleave per
+# model, so a spent budget costs both the same tables rather than one engine all of its own.
 #
-# This is the canonical EIGHT. `fct_summary_daily` used to be listed here and is NOT a model
+# This is the canonical set. `fct_summary_daily` used to be listed here and is NOT a model
 # in this repo — it existed only in the iceberg source repo, which is exactly the one-engine
 # drift the merge exists to stop. Listing it only bought a "no version-hint" read failure
 # every run.
-# NO stg_csv_archive_log. It is not a catalog table: the iceberg model declares
-# database='memory', so it is a view in DuckDB's in-memory catalog that dies with the run --
-# the same session view duckrun and ducklake get. It WAS an insert-only table here until
-# 2026-09-18, so an old one may still sit in OneLake; nothing below will touch it.
-TABLES = [
-    f"{LANDING}.fct_price_today",
-    f"{LANDING}.fct_scada_today",
-    f"{MART}.fct_summary",
-    f"{MART}.dim_calendar",
-    f"{MART}.dim_duid",
-    f"{LANDING}.fct_price",
-    f"{LANDING}.fct_scada",
+# NO stg_csv_archive_log, on either engine. On iceberg it is not a catalog table: the model
+# declares database='memory', so it is a view in DuckDB's in-memory catalog that dies with the
+# run -- the same session view duckrun and ducklake get (it WAS an insert-only table there
+# until 2026-09-18, so an old one may still sit in OneLake; nothing below will touch it). On
+# polars it is a `table` model, replaced whole every run: one file, nothing to fold.
+MODELS = [
+    ("landing", "fct_price_today"),
+    ("landing", "fct_scada_today"),
+    ("mart", "fct_summary"),
+    ("mart", "dim_calendar"),
+    ("mart", "dim_duid"),
+    ("landing", "fct_price"),
+    ("landing", "fct_scada"),
 ]
+TABLES = [f"{schemas(e)[0 if zone == 'landing' else 1]}.{name}"
+          for zone, name in MODELS for e in ENGINES]
 
 
 def oneline(e):
@@ -185,8 +201,14 @@ def connect():
     con.execute(f"SET GLOBAL azure_transport_option_type = '{AZURE_TRANSPORT}'")
     con.execute("SET GLOBAL temp_directory = '/tmp/duckdb_spill'")
 
-    # The token authenticates to the REST catalog only. Storage credentials are vended by
-    # the catalog per table (the default access delegation mode) -- no azure secret here.
+    # The storage credential, explicitly: vended credentials stopped being applied (runs
+    # 38992461895, 38992730624 -- see the module docstring). Unscoped, like the iceberg
+    # profile's, so it covers every abfss:// path the rewrite opens.
+    con.execute(
+        f"CREATE SECRET onelake_storage (TYPE azure, PROVIDER access_token, "
+        f"ACCESS_TOKEN '{TOKEN}')"
+    )
+    # The token on the ATTACH authenticates to the REST catalog.
     con.execute(
         f"ATTACH '{WAREHOUSE}' AS onelake "
         f"(TYPE iceberg, ENDPOINT '{ENDPOINT}', TOKEN '{TOKEN}')"
@@ -270,9 +292,10 @@ def report(lines, duckdb_version):
     used to be the first table on the run page -- one engine's maintenance, ahead of the
     cross-engine layout table that is the point of the whole repo. Compaction is a detail of the
     iceberg leg; it belongs in that leg's log. Nothing else reads this."""
-    out = ["=" * 100, f"Iceberg compaction (duckdb {duckdb_version})", "-" * 100]
+    out = ["=" * 100, f"Iceberg compaction (duckdb {duckdb_version}; "
+                      f"engines: {', '.join(ENGINES) or 'none'})", "-" * 100]
     for table, status in lines:
-        out.append(f"{table:<32}{status}")
+        out.append(f"{table:<34}{status}")
     out.append("=" * 100)
     print("\n".join(out))
 
@@ -285,6 +308,10 @@ def main():
     for t in TABLES:
         print(f"  - onelake.{t}")
     print(flush=True)
+
+    if not TABLES:
+        print("no Iceberg writer among COMPACT_ENGINES -- nothing to compact")
+        return
 
     con = connect()
     if not has_rewrite_function(con):
