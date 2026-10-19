@@ -122,13 +122,19 @@ def test_file_list_probe_reads_two_files(smoke):
     assert "A.CSV" in sql and "B.CSV" in sql
 
 
-def test_requirements_use_released_dbt_polars():
-    """dbt-polars as released, pinned, no fork: the models read files with Polars SQL table
-    functions, so nothing waits on an adapter patch."""
+def test_requirements_pin_dbt_polars_exactly():
+    """dbt-polars as released, or -- while a fix waits upstream -- ONE fork commit by its full
+    SHA (datamindedbe/incubator-dbt-polars#45). Never a branch or a floating ref: the leg must
+    install the same adapter on every run."""
+    import re
     reqs = [l for l in (REPO / "requirements" / "polars.txt").read_text().splitlines()
             if l.strip() and not l.startswith("#")]
-    assert not any("incubator-dbt-polars" in l or "git+" in l for l in reqs)
-    assert any(l.startswith("dbt-polars[iceberg]==") for l in reqs)
+    pins = [l for l in reqs if l.startswith("dbt-polars")]
+    assert len(pins) == 1, pins
+    released = re.fullmatch(r"dbt-polars\[iceberg\]==[0-9.]+", pins[0])
+    fork = re.fullmatch(r"dbt-polars\[iceberg\] @ git\+https://github\.com/djouallah/"
+                        r"incubator-dbt-polars@[0-9a-f]{40}", pins[0])
+    assert released or fork, pins[0]
 
 
 def test_only_the_source_probe_gets_the_file_catalog(smoke):

@@ -393,9 +393,15 @@ dbt-polars (Polars SQL, writes Iceberg through pyiceberg into the same OneLake R
 `iceberg`). Everything below was found by `polars_smoke.yml` before the leg was built; the
 probe stays as the place to try an adapter question cheaply.
 
-- **dbt-polars as released (PyPI, pinned), no fork.** Upstream reviews slowly, so the project
-  takes nothing that waits on an adapter patch: work around the adapter in the models, or not
-  at all. That is why there are no sources (next point). The parity fingerprint is a
+- **dbt-polars as released (PyPI, pinned) — TEMPORARILY one fork commit.** Upstream reviews
+  slowly, so the project works around the adapter in the models wherever SQL can; that is why
+  there are no sources (next point). The exception is a bug no model can route around:
+  0.4.0's Iceberg `merge` / `delete+insert` deletes with one pyiceberg `And` per batch row
+  (2.1 s at 1k rows, 22 s at 5k, segfault at 20k), so `fct_summary`'s merge on
+  `(date, time, DUID)` never finishes a 50-file batch (pipeline run 39248545724, cancelled).
+  `requirements/polars.txt` pins the fix by full SHA from `djouallah/incubator-dbt-polars`
+  (datamindedbe/incubator-dbt-polars#45); go back to the PyPI pin once a release carries it.
+  `tests_py/test_polars_smoke.py` allows exactly those two forms. The parity fingerprint is a
   run-operation like every engine's: 0.4.0 resolves a `ref()` there (dbt-polars#39).
 - **Every landed file is read with a Polars SQL table function**, `read_csv()` /
   `read_parquet()` in the model, never a source (a source would need a file catalog and the
