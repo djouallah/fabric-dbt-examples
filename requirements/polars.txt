@@ -4,10 +4,11 @@
 # functions (read_csv / read_parquet), so no source needs an adapter patch. 0.4.0 resolves a
 # ref() in run-operation (datamindedbe/incubator-dbt-polars#39): the parity fingerprint.
 dbt-polars[iceberg]==0.4.0
-# POLARS MAIN, pola-rs/polars@b87c8ba173 (lakehouse_benchmark's tmp_polars_main.yml build), until
-# a release has what the models use: read_csv() options (#29917) and missing_columns in SQL
-# (#29970, the merge of PR #29975, which this build is), TIMESTAMPTZ (#29878),
+# POLARS MAIN, pola-rs/polars@4207839322 (lakehouse_benchmark's tmp_polars_main.yml build), until
+# a release has what the models use: read_csv() options (#29917), missing_columns in SQL
+# (#29970, PR #29975), a list of paths in SQL read_csv() (#29969, PR #30047, which this
+# build is), TIMESTAMPTZ (#29878),
 # generate_series (#29879), and the IN-subquery and nested-WITH scoping fixes (#29876, #29877).
 # dbt-polars asks only polars>=1.44.1, which this satisfies.
-polars @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-b87c8ba173/polars-2.0.0-py3-none-any.whl
-polars-runtime-32 @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-b87c8ba173/polars_runtime_32-2.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+polars @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-4207839322/polars-2.0.0-py3-none-any.whl
+polars-runtime-32 @ https://github.com/djouallah/lakehouse_benchmark/releases/download/polars-main-4207839322/polars_runtime_32-2.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl

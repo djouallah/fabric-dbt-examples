@@ -516,21 +516,22 @@ def probes(ctx):
 SCALE_FILES = (10, 25, 50)
 SCALE_RSS_LIMIT = 5.5 * 2**30   # the runner has 7 GB; past this it is an OOM in the pipeline
 SCALE_TIMEOUT = 300
-# (name, frame, how it is executed, extra env). Frames: `sql` is fct_price's SQL over OneLake;
-# `scan_list` is ONE Python scan_csv over the list, the form SQL read_csv() cannot express
-# (pola-rs/polars#29969); `concat` is pl.concat of one scan_csv per file, which is what the SQL
-# UNION ALL plans to; `sql_local` is the SQL over copies on the runner's disk, which separates
-# reading OneLake from parsing. Same files, schema, options and DREGION filter in every frame.
+# (name, frame, how it is executed, extra env). Frames: `sql` is fct_price's SQL over OneLake,
+# ONE read_csv() over the list (pola-rs/polars#29969, fixed by #30047); `sql_union` is the shape
+# it replaced, one read_csv() per file joined by UNION ALL -- an unordered union, kept to track
+# pola-rs/polars#30029; `scan_list` is ONE Python scan_csv over the list; `concat` is pl.concat
+# of one scan_csv per file (the ORDERED union); `sql_local` is the SQL over copies on the
+# runner's disk, which separates reading OneLake from parsing. Same files, schema, options and DREGION filter in every frame.
 # `stream` is dbt-polars 0.4.0's write path for an append into Iceberg
 # (iceberg_write_utils._iter_arrow_batches, write_mode 'lazy', the default); `collect` is the
 # same function with any other write_mode.
 SCALE_VARIANTS = (
-    ("SQL UNION ALL, streaming", "sql", "stream", {}),
-    ("SQL UNION ALL, in-memory", "sql", "collect", {}),
-    ("SQL UNION ALL, streaming, 2 threads", "sql", "stream", {"POLARS_MAX_THREADS": "2"}),
+    ("SQL read_csv(list), streaming", "sql", "stream", {}),
+    ("SQL read_csv(list), in-memory", "sql", "collect", {}),
+    ("SQL read_csv(list), local disk", "sql_local", "stream", {}),
+    ("SQL UNION ALL per file, streaming", "sql_union", "stream", {}),
     ("python scan_csv(list), streaming", "scan_list", "stream", {}),
     ("python concat(scan_csv), streaming", "concat", "stream", {}),
-    ("SQL UNION ALL, local disk, streaming", "sql_local", "stream", {}),
 )
 SCALE_CHILD = r"""
 import json, sys, time
@@ -570,21 +571,29 @@ def spec_columns(record):
     return re.findall(r"\['([^']+)',\s*'[^']+'\]", cols)
 
 
-def price_staging_sql(paths):
-    """polars_staging('price', 'daily', files), as macros/polars_read_csv.sql renders it: one
-    read_csv() per file, the spec's columns all VARCHAR, the DREGION filter in every branch."""
+def _price_read(source):
     schema = ", ".join(f"'{c}': 'VARCHAR'" for c in spec_columns("price"))
-    return "\nUNION ALL\n".join(
-        f"SELECT * FROM read_csv('{p}', has_header => false, skip_rows => 1, "
-        f"schema => {{{schema}}}, missing_columns => 'insert', truncate_ragged_lines => true, "
-        f"include_file_paths => 'filename') WHERE I = 'D' AND UNIT = 'DREGION' AND VERSION = '3'"
-        for p in paths)
+    return (f"SELECT * FROM read_csv({source}, has_header => false, skip_rows => 1, "
+            f"schema => {{{schema}}}, missing_columns => 'insert', truncate_ragged_lines => true, "
+            f"include_file_paths => 'filename') WHERE I = 'D' AND UNIT = 'DREGION' AND VERSION = '3'")
+
+
+def price_staging_sql(paths):
+    """polars_staging('price', 'daily', files), as macros/polars_read_csv.sql renders it: ONE
+    read_csv() over the list, the spec's columns all VARCHAR, the DREGION filter."""
+    return _price_read("[" + ", ".join(f"'{p}'" for p in paths) + "]")
+
+
+def price_union_sql(paths):
+    """The shape polars_staging had until SQL took a list: one read_csv() per file, UNION ALL."""
+    return "\nUNION ALL\n".join(_price_read(f"'{p}'") for p in paths)
 
 
 def scale_spec(frame, how, paths):
     """What one cell's child reads: the same files, columns and filter whatever the frame."""
     return {"frame": frame, "how": how, "paths": paths, "columns": spec_columns("price"),
-            "sql": price_staging_sql(paths) if frame.startswith("sql") else None,
+            "sql": (price_union_sql(paths) if frame == "sql_union"
+                    else price_staging_sql(paths) if frame.startswith("sql") else None),
             "token": TOKEN}
 
 

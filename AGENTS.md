@@ -401,15 +401,23 @@ probe stays as the place to try an adapter question cheaply.
   `read_parquet()` in the model, never a source (a source would need a file catalog and the
   adapter patches above). The credential is `AZURE_STORAGE_TOKEN`, which run_dbt.py copies from
   `ONELAKE_TOKEN`: table functions take none. The ragged AEMO CSVs are read by ONE
-  `read_csv()` over the folder's glob with a FIXED schema — the record's spec columns, all
-  VARCHAR, bound BY POSITION — plus `missing_columns => 'insert'` and `truncate_ragged_lines`
-  (`missing_columns` is in SQL since pola-rs/polars#29975), ONE `read_csv()` PER FILE joined
-  by UNION ALL: 5 s for 10 files in smoke run 38904749014, against 42 s for the widest-row
-  inference it replaced. SQL `read_csv()` takes no list of paths (pola-rs/polars#29969), and a
-  glob over the folder reads EVERY file — Polars skips no file on a filename filter — so run
-  38907253166 sat on the whole landing folder until cancelled. When #29969 lands, the union
-  becomes one `read_csv()` of the list. Never `infer_schema => false` (the first line's width:
-  a DUNIT row came back 25 wide) and never inference over a glob (it outran 20 minutes).
+  `read_csv()` over the LIST of picked files (SQL takes a list since pola-rs/polars#30047, which
+  fixed #29969) with a FIXED schema — the record's spec columns, all VARCHAR, bound BY
+  POSITION — plus `missing_columns => 'insert'` and `truncate_ragged_lines` (`missing_columns`
+  is in SQL since pola-rs/polars#29975): 5 s for 10 files in smoke run 38904749014, against
+  42 s for the widest-row inference it replaced. Never a glob over the folder — Polars skips no
+  file on a filename filter, so run 38907253166 sat on the whole landing folder until cancelled
+  — and **never back to one `read_csv()` per file joined by UNION ALL**, the shape until the
+  list landed: Polars plans it as an UNORDERED union, whose streaming engine runs every input
+  at once (~0.34 GB of peak RSS per file, OOM at 25 files on the 7 GB runner, while one scan of
+  the list held 50 in 4.1 GB — smoke run 38998855350, pola-rs/polars#30029, still open). That
+  is what lost `fct_price` at `process_limit: 50` in pipeline runs 38916926144 and 38994136728.
+  `tests_py/test_process_order.py` pins the single read. Never `infer_schema => false` (the
+  first line's width: a DUNIT row came back 25 wide) and never inference over a glob (it outran
+  20 minutes). **Do not cap polars' `process_limit`, relax its tests, or fold fewer files on it
+  alone** to get past a Polars limit: the leg exists to surface those upstream, and a
+  per-engine cap would also make it fold different files from the other four and break parity.
+  The scale probe (`polars_smoke.yml`, `only: scale`) is how to re-check a new Polars build.
 - **No SQL hooks, so the file choice happens at parse time.** `polars_pending_files()` runs
   the DuckDB pre-hooks' query with `run_query` — same filter, `ORDER BY archive_path DESC`,
   same `process_limit` — and each file it lists becomes one `read_csv()` in the model.
@@ -423,7 +431,7 @@ probe stays as the place to try an adapter question cheaply.
   (their `unique_key` starts with `file`, so that is the same operation) and `dim_duid`
   anti-joins `{{ this }}` on its key. `fct_summary` is insert-only on no engine: it is
   dbt-polars' `merge` with its `unique_key`, update + insert.
-- **Polars main, not a release** (pola-rs/polars@b87c8ba173, pinned in requirements/polars.txt),
+- **Polars main, not a release** (pola-rs/polars@4207839322, pinned in requirements/polars.txt),
   for the SQL fixes 2.0.0 lacks: an unqualified column in `IN (SELECT ...)` (#29876), `WITH`
   inside a derived table (#29877), `TIMESTAMPTZ` (#29878) and `generate_series` (#29879). So
   the polars copies keep the DuckDB text for those too, TIMESTAMPTZ included. Still missing:
@@ -432,18 +440,6 @@ probe stays as the place to try an adapter question cheaply.
   Column names are case-sensitive, unlike DuckDB (geo_data's `DUID`).
 - **Both modes, like the other in-process engines.** Nothing on its path installs duckrun any
   more, so the deltalake clash (djouallah/duckrun#83) cannot reach it.
-- **`process_limit: 50` DOES NOT FIT the 7 GB runner, and that is an upstream bug, not a
-  setting to lower.** The per-file `read_csv()` UNION ALL is an UNORDERED union, and Polars'
-  streaming engine runs every input of one at once: ~0.34 GB of peak RSS per file on 2.0.0,
-  twice that on the pinned main, while `pl.concat` of the same scans stays flat
-  (pola-rs/polars#30029; polars_smoke scale probe, run 38998855350 — OOM at 25 files in every
-  execution mode, while one Python `scan_csv(list)` held 50 in 4.1 GB). `fct_price` stalls or
-  takes the runner with it (pipeline runs 38916926144, 38994136728). SQL can express neither
-  way out — no path list (#29969), no ordered union — so the leg stays red at 50 until one
-  lands. **Do not cap polars' `process_limit`, relax its tests, or fold fewer files on it
-  alone**: the leg exists to surface exactly this, and a per-engine cap would also make it
-  fold different files from the other four and break parity. The scale probe
-  (`polars_smoke.yml`, `only: scale`) is how to re-check a new Polars build.
 - **Not compacted.** `compact_iceberg.py` is iceberg's alone.
 
 ## Why iceberg is not on dbt OSS 2

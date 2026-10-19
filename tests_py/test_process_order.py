@@ -51,6 +51,16 @@ def test_the_polars_picker_orders_before_it_limits():
     assert "ORDER BY archive_path DESC LIMIT {{ env_var('process_limit'" in src
 
 
+def test_the_polars_files_are_one_read_not_a_union():
+    """ONE read_csv() over the picked list. A UNION ALL of per-file reads is an unordered union,
+    which Polars' streaming engine runs all at once: OOM at 25 files on the runner
+    (pola-rs/polars#30029)."""
+    src = POLARS_MACRO.read_text(encoding="utf-8")
+    body = src[src.index("{% macro polars_staging"):]
+    assert body.count("read_csv(") == 1 and "read_csv({{ source }}" in body
+    assert "UNION ALL" not in body and "{%- for f in paths %}" not in body
+
+
 @pytest.mark.parametrize("path", POLARS_MODELS, ids=lambda p: p.name)
 def test_every_polars_fact_model_uses_the_picker(path):
     assert "polars_pending_files(" in path.read_text(encoding="utf-8")
