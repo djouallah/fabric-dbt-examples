@@ -14,3 +14,6 @@ sqlglot
 # tests_py/test_jinja_syntax.py lexes every model and macro with Jinja's own parser -- the
 # one syntax check that costs no dbt install.
 jinja2
+# tests_py/test_pipeline_compact.py imports .github/scripts/compact_iceberg.py to read its TABLES,
+# and the script imports duckdb at the top. The Python package only, no dbt.
+duckdb
