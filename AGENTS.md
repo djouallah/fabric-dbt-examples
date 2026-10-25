@@ -398,16 +398,15 @@ dbt-polars (Polars SQL, writes Iceberg through pyiceberg into the same OneLake R
 `iceberg`). Everything below was found by `polars_smoke.yml` before the leg was built; the
 probe stays as the place to try an adapter question cheaply.
 
-- **dbt-polars as released (PyPI, pinned) — TEMPORARILY one upstream main commit.** The project
-  works around the adapter in the models wherever SQL can; that is why there are no sources
-  (next point). The exception is a bug no model can route around: 0.4.0's Iceberg `merge` /
-  `delete+insert` deletes with one pyiceberg `And` per batch row (2.1 s at 1k rows, 22 s at 5k,
-  segfault at 20k), so `fct_summary`'s merge on `(date, time, DUID)` never finishes a 50-file
-  batch (pipeline run 39248545724, cancelled). The fix (datamindedbe/incubator-dbt-polars#45)
-  is on upstream main, not yet on PyPI: `requirements/polars.txt` pins that main commit by full
-  SHA; go back to the PyPI pin once a release carries it.
-  `tests_py/test_polars_smoke.py` allows exactly those two forms. The parity fingerprint is a
-  run-operation like every engine's: 0.4.0 resolves a `ref()` there (dbt-polars#39).
+- **dbt-polars as released (PyPI, pinned).** The project works around the adapter in the models
+  wherever SQL can; that is why there are no sources (next point). The one bug no model could
+  route around, 0.4.0's Iceberg `merge` / `delete+insert` deleting with one pyiceberg `And` per
+  batch row (2.1 s at 1k rows, 22 s at 5k, segfault at 20k; `fct_summary`'s merge on
+  `(date, time, DUID)` never finished a 50-file batch, pipeline run 39248545724), is fixed in
+  0.5.0 (datamindedbe/incubator-dbt-polars#45). Should a fix ever wait upstream again,
+  `tests_py/test_polars_smoke.py` also allows one upstream commit by full SHA. The parity
+  fingerprint is a run-operation like every engine's: dbt-polars resolves a `ref()` there
+  (dbt-polars#39).
 - **Every landed file is read with a Polars SQL table function**, `read_csv()` /
   `read_parquet()` in the model, never a source (a source would need a file catalog and the
   adapter patches above). The credential is `AZURE_STORAGE_TOKEN`, which run_dbt.py copies from

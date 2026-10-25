@@ -2,5 +2,5 @@
 # probe measures the adapter the polars leg runs on. The pin and its reasons are in polars.txt.
 -r polars.txt
 # The source probe's file catalog: a source with external.location must sit under a storage
-# catalog. From the same upstream commit as dbt-polars (the package requires dbt-polars==<version>).
-dbt-polars-catalog-azure @ git+https://github.com/datamindedbe/incubator-dbt-polars@fb0bd9e955d9c6c69347871fa26d791cf952b0cb#subdirectory=catalogs/dbt-polars-catalog-azure
+# catalog. Pinned to dbt-polars' own version (the package requires dbt-polars==<version>).
+dbt-polars-catalog-azure==0.5.0
