@@ -123,18 +123,18 @@ def test_file_list_probe_reads_two_files(smoke):
 
 
 def test_requirements_pin_dbt_polars_exactly():
-    """dbt-polars as released, or -- while a fix waits upstream -- ONE fork commit by its full
-    SHA (datamindedbe/incubator-dbt-polars#45). Never a branch or a floating ref: the leg must
-    install the same adapter on every run."""
+    """dbt-polars as released, or -- while a fix waits for a release -- ONE upstream main commit
+    by its full SHA (datamindedbe/incubator-dbt-polars#45). Never a branch or a floating ref: the
+    leg must install the same adapter on every run."""
     import re
     reqs = [l for l in (REPO / "requirements" / "polars.txt").read_text().splitlines()
             if l.strip() and not l.startswith("#")]
     pins = [l for l in reqs if l.startswith("dbt-polars")]
     assert len(pins) == 1, pins
     released = re.fullmatch(r"dbt-polars\[iceberg\]==[0-9.]+", pins[0])
-    fork = re.fullmatch(r"dbt-polars\[iceberg\] @ git\+https://github\.com/djouallah/"
+    main = re.fullmatch(r"dbt-polars\[iceberg\] @ git\+https://github\.com/datamindedbe/"
                         r"incubator-dbt-polars@[0-9a-f]{40}", pins[0])
-    assert released or fork, pins[0]
+    assert released or main, pins[0]
 
 
 def test_only_the_source_probe_gets_the_file_catalog(smoke):

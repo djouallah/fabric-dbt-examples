@@ -1,13 +1,13 @@
-# The polars engine: dbt-polars 0.4.0 plus ONE fix, and Polars MAIN.
+# The polars engine: dbt-polars upstream main, and Polars MAIN.
 #
-# TEMPORARY: dbt-polars from the fork commit that fixes datamindedbe/incubator-dbt-polars#45
-# (branch fix/iceberg-composite-key-delete). 0.4.0's Iceberg merge deletes with one pyiceberg
-# And per batch row, so fct_summary's merge on (date, time, DUID) cannot finish a 50-file batch
-# (pipeline run 39248545724 sat in it until cancelled). This run proves the fix here before the
-# upstream PR; back to `dbt-polars[iceberg]==<release>` once a release carries it. The models
-# read every landed file with Polars SQL table functions, so no source needs an adapter patch;
-# 0.4.0 resolves a ref() in run-operation (dbt-polars#39): the parity fingerprint.
-dbt-polars[iceberg] @ git+https://github.com/djouallah/incubator-dbt-polars@580397772b0d04585d53d4b9af88a5f94773b493
+# TEMPORARY: dbt-polars upstream main fb0bd9e955 (v0.5.0, not on PyPI yet), which has the fix for
+# datamindedbe/incubator-dbt-polars#45. 0.4.0's Iceberg merge deletes with one pyiceberg And per
+# batch row, so fct_summary's merge on (date, time, DUID) cannot finish a 50-file batch
+# (pipeline run 39248545724 sat in it until cancelled). Back to `dbt-polars[iceberg]==<release>`
+# once a release carries it. The models read every landed file with Polars SQL table functions,
+# so no source needs an adapter patch; dbt-polars resolves a ref() in run-operation
+# (dbt-polars#39): the parity fingerprint.
+dbt-polars[iceberg] @ git+https://github.com/datamindedbe/incubator-dbt-polars@fb0bd9e955d9c6c69347871fa26d791cf952b0cb
 # POLARS MAIN, pola-rs/polars@4207839322 (lakehouse_benchmark's tmp_polars_main.yml build), until
 # a release has what the models use: read_csv() options (#29917), missing_columns in SQL
 # (#29970, PR #29975), a list of paths in SQL read_csv() (#29969, PR #30047, which this
